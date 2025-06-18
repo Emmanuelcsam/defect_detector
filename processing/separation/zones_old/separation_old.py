@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import argparse
 import os
 import matplotlib.pyplot as plt
 from skimage.feature import local_binary_pattern
@@ -23,12 +22,13 @@ def segment_fiber_with_multimodal_analysis(image_path, output_dir='output_advanc
     """
     # --- 1. Preprocessing: Load, Convert, and Blur ---
     if not os.path.exists(image_path):
-        print(f"Error: The file '{image_path}' does not exist.")
+        print(f"\nError: The file was not found at the specified path: '{image_path}'")
+        print("Please check the path and try again.")
         return
 
     original_image = cv2.imread(image_path)
     if original_image is None:
-        print(f"Error: Could not read image from '{image_path}'.")
+        print(f"Error: Could not read the image from '{image_path}'. The file may be corrupt or in an unsupported format.")
         return
 
     gray_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2GRAY)
@@ -203,13 +203,21 @@ def segment_fiber_with_multimodal_analysis(image_path, output_dir='output_advanc
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description="""Advanced Fiber Optic Segmentation Script.
-        Uses a multi-modal analysis of Intensity, Change Magnitude, and Texture
-        to robustly separate Core, Cladding, and Ferrule regions."""
-    )
-    parser.add_argument('-i', '--image', type=str, required=True, help='Path to the input fiber optic image file.')
-    parser.add_argument('-o', '--output', type=str, default='output_advanced', help='Directory to save the segmented output files.')
-    args = parser.parse_args()
+    # --- MODIFIED SECTION: Interactive User Input ---
+    print("--- Advanced Fiber Optic Segmentation Tool ---")
+    
+    # Ask the user for the path to the image file.
+    image_path_input = input("Please enter the full path to the image you want to analyze: ")
+    
+    # Clean up the input path to handle potential quotes from copy-pasting.
+    image_path_cleaned = image_path_input.strip().strip('"').strip("'")
 
-    segment_fiber_with_multimodal_analysis(args.image, args.output)
+    # Define the output directory (can also be made an input prompt if desired)
+    output_dir_default = 'output_advanced'
+
+    print(f"\nAnalyzing image: {image_path_cleaned}")
+    print(f"Output will be saved in: '{output_dir_default}/'")
+    print("-" * 30)
+    
+    # Call the main analysis function with the user-provided path.
+    segment_fiber_with_multimodal_analysis(image_path_cleaned, output_dir_default)
