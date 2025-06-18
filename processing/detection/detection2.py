@@ -2,17 +2,19 @@
 """
 OmniFiberAnalyzer: The Unified Fiber Optic End Face Analysis System
 ====================================================================
-Version: 1.0
+Version: 2.0 (Rewritten & Unified)
 
-This script represents the synergistic fusion of three distinct analysis philosophies:
-- The robust engineering and reporting of 'daniel.py'
-- The exhaustive algorithmic ensemble of 'jill.py'
-- The statistical process control of 'jake.py'
+This script represents the synergistic fusion of three distinct analysis philosophies,
+guided by the detailed unification plan provided in the source documents:
+- The robust engineering, reporting, and defect characterization of 'daniel.py'
+- The exhaustive algorithmic ensemble and advanced preprocessing of 'jill.py'
+- The statistical process control and knowledge-base-driven anomaly detection of 'jake.py'
 
 It follows a meticulous, multi-stage pipeline to achieve the highest possible
-accuracy and depth of analysis.
+accuracy and depth of analysis. This version replaces all placeholder algorithms
+with their full implementations and corrects known issues.
 
-Author: Unified Analysis Team
+Author: Unified Analysis Team (Integration by Gemini)
 """
 
 import cv2
@@ -27,7 +29,10 @@ import traceback
 from pathlib import Path
 from scipy import ndimage, stats, signal
 from scipy.signal import find_peaks
+# --- CORRECTED IMPORTS ---
+# `measure` is removed as it's no longer used for structural_similarity.
 from skimage import morphology, feature, filters, transform, segmentation, restoration
+# `structural_similarity` is now imported from its correct location in `skimage.metrics`.
 from skimage.metrics import structural_similarity
 from skimage.feature import graycomatrix, graycoprops, local_binary_pattern
 from sklearn.ensemble import IsolationForest
@@ -153,7 +158,7 @@ class Defect:
         d = asdict(self)
         d['type'] = self.type.name
         d['severity'] = self.severity.name
-        d['mask'] = None
+        d['mask'] = None # Don't serialize the bulky mask
         return d
 
 @dataclass
@@ -162,14 +167,11 @@ class AnalysisReport:
     timestamp: str
     image_path: str
     image_info: Dict[str, Any]
-    # Results from jake.py module
     global_anomaly_analysis: Optional[Dict[str, Any]]
-    # Results from geometric analysis
     fiber_metrics: Dict[str, Any]
     defects: List[Defect]
     quality_score: float
     pass_fail_geometric: bool
-    # Combined final verdict
     final_verdict: str
     final_verdict_reason: str
     analysis_time: float
@@ -179,7 +181,7 @@ class AnalysisReport:
 
 # --- Helper Class for jake.py Functionality ---
 class KnowledgeBaseAnalyzer:
-    """Encapsulates all functionality from jake.py."""
+    """Encapsulates all functionality from jake.py for statistical analysis."""
     def __init__(self, config: OmniConfig, kb_path: str = "ultra_anomaly_kb.json"):
         self.config = config
         self.knowledge_base_path = kb_path
@@ -207,7 +209,7 @@ class KnowledgeBaseAnalyzer:
                 logging.error(f"Could not load knowledge base: {e}")
                 self.reference_model = {}
         else:
-            logging.warning(f"Knowledge base not found at: {self.knowledge_base_path}")
+            logging.warning(f"Knowledge base not found at: {self.knowledge_base_path}. A new one must be built.")
             self.reference_model = {}
     
     def save_knowledge_base(self):
@@ -229,7 +231,7 @@ class KnowledgeBaseAnalyzer:
             logging.error(f"Error saving knowledge base: {e}")
 
     def load_image(self, path):
-        """Load image from JSON or standard image file."""
+        """Load image from JSON or standard image file (ported from jake.py)."""
         if path.lower().endswith('.json'):
             try:
                 with open(path, 'r') as f: data = json.load(f)
@@ -248,51 +250,52 @@ class KnowledgeBaseAnalyzer:
             return img
 
     def extract_ultra_comprehensive_features(self, image: np.ndarray) -> (Dict[str, float], List[str]):
-        """Ported from jake.py - Extracts 100+ features."""
+        """Ported from jake.py - Extracts a rich set of global image features."""
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         features = {}
         
-        # Statistical
+        # Statistical features
         flat = gray.flatten()
         features['stat_mean'] = float(np.mean(gray))
         features['stat_std'] = float(np.std(gray))
         features['stat_skew'] = float(stats.skew(flat))
         features['stat_kurtosis'] = float(stats.kurtosis(flat))
         
-        # LBP
+        # LBP features
         lbp = local_binary_pattern(gray, 24, 3, method='uniform')
         features['lbp_mean'] = np.mean(lbp)
         features['lbp_std'] = np.std(lbp)
         
-        # GLCM
+        # GLCM features
         glcm = graycomatrix(gray, distances=[5], angles=[0], levels=256, symmetric=True, normed=True)
         features['glcm_contrast'] = graycoprops(glcm, 'contrast')[0, 0]
         features['glcm_homogeneity'] = graycoprops(glcm, 'homogeneity')[0, 0]
         features['glcm_energy'] = graycoprops(glcm, 'energy')[0, 0]
         
-        # Fourier
+        # Fourier features
         f = np.fft.fft2(gray)
         fshift = np.fft.fftshift(f)
         magnitude = np.abs(fshift)
         features['fft_mean_magnitude'] = np.mean(magnitude)
         
-        # Hu Moments
+        # Hu Moments for shape
         moments = cv2.moments(gray)
         hu_moments = cv2.HuMoments(moments).flatten()
         for i, hu in enumerate(hu_moments):
+            # Log transform for scale invariance
             features[f'shape_hu_{i}'] = float(-np.sign(hu) * np.log10(abs(hu) + 1e-10))
             
         feature_names = sorted(features.keys())
         return features, feature_names
 
     def build_comprehensive_reference_model(self, ref_dir: str):
-        """Builds the knowledge base from a directory of images."""
+        """Builds the knowledge base from a directory of known-good images."""
         logging.info(f"Building comprehensive reference model from: {ref_dir}")
-        valid_ext = ['.json', '.png', '.jpg', '.jpeg', '.bmp', '.tif']
+        valid_ext = ['.json', '.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff']
         all_files = [os.path.join(ref_dir, f) for f in os.listdir(ref_dir) if os.path.splitext(f)[1].lower() in valid_ext]
         
         if len(all_files) < 2:
-            logging.error("At least 2 reference files are required to build a model.")
+            logging.error("At least 2 reference files are required to build a robust model.")
             return False
 
         all_features, all_images, feature_names = [], [], []
@@ -307,12 +310,12 @@ class KnowledgeBaseAnalyzer:
             all_images.append(gray)
 
         if not all_features:
-            logging.error("No features could be extracted from any file.")
+            logging.error("No features could be extracted from any file in the reference directory.")
             return False
             
         feature_matrix = np.array([[f.get(name, 0) for name in feature_names] for f in all_features])
         
-        # Align images and create archetype
+        # Align images and create the median "archetype" image
         target_shape = all_images[0].shape
         aligned_images = [cv2.resize(img, (target_shape[1], target_shape[0])) for img in all_images]
         archetype_image = np.median(aligned_images, axis=0).astype(np.uint8)
@@ -327,13 +330,13 @@ class KnowledgeBaseAnalyzer:
             'archetype_image': archetype_image,
         }
         self.save_knowledge_base()
-        logging.info("Reference model built successfully.")
+        logging.info("Reference model built and saved successfully.")
         return True
 
     def detect_anomalies_comprehensive(self, image: np.ndarray) -> Optional[Dict]:
-        """Performs statistical anomaly detection on a test image."""
+        """Performs statistical anomaly detection on a test image against the knowledge base."""
         if not self.reference_model.get('statistical_model'):
-            logging.warning("No reference model available for statistical analysis.")
+            logging.warning("No reference model available for statistical analysis. Skipping.")
             return None
 
         logging.info("Performing global statistical anomaly analysis...")
@@ -344,19 +347,29 @@ class KnowledgeBaseAnalyzer:
         test_vector = np.array([test_features.get(fname, 0) for fname in feature_names])
         mean_vector = stat_model['mean']
         std_vector = stat_model['std']
-        std_vector[std_vector == 0] = 1.0 # Avoid division by zero
+        std_vector[std_vector == 0] = 1.0 # Avoid division by zero for stable calculation
         
-        # Mahalanobis distance (simplified)
+        # Mahalanobis distance (simplified using Z-scores)
         z_scores = (test_vector - mean_vector) / std_vector
         mahalanobis_dist = np.sqrt(np.mean(z_scores**2))
 
+        # --- FIX APPLIED AS PER USER REQUEST ---
         # Structural Similarity (SSIM)
         archetype = self.reference_model['archetype_image']
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         if gray.shape != archetype.shape:
             gray = cv2.resize(gray, (archetype.shape[1], archetype.shape[0]))
-        # CORRECTED LINE: Call the function directly and add the data_range parameter
-        ssim_score, diff = structural_similarity(gray, archetype, full=True, data_range=gray.max() - gray.min())
+        
+        # CORRECTED LINE: Call structural_similarity directly and add data_range for robustness.
+        # The `data_range` parameter accounts for the dynamic range of the image data,
+        # which is crucial for accurate SSIM calculation.
+        ssim_score, diff = structural_similarity(
+            gray, 
+            archetype, 
+            full=True, 
+            data_range=gray.max() - gray.min()
+        )
+        # --- END OF FIX ---
 
         is_anomalous = (mahalanobis_dist > self.config.global_anomaly_mahalanobis_threshold or
                          ssim_score < self.config.global_anomaly_ssim_threshold)
@@ -381,14 +394,14 @@ class OmniFiberAnalyzer:
         self.pixels_per_micron = None
 
     def analyze_end_face(self, image_path: str) -> Optional[AnalysisReport]:
-        """The master analysis pipeline."""
+        """The master analysis pipeline, following the unified plan."""
         logging.info(f"--- Starting Omni-Analysis for: {image_path} ---")
         start_time = time.time()
         self.warnings.clear()
         self.intermediate_results.clear()
 
         # === STAGE 1: LOAD & PREPARE ===
-        raw_image = cv2.imread(image_path)
+        raw_image = self.kb_analyzer.load_image(image_path) if self.kb_analyzer else cv2.imread(image_path)
         if raw_image is None:
             logging.error("Image loading failed.")
             return None
@@ -410,7 +423,6 @@ class OmniFiberAnalyzer:
         fiber_info, zone_masks = self._locate_fiber_and_define_zones(preprocessed_images, gray_image)
         if not fiber_info:
             logging.error("Could not locate fiber. Aborting geometric analysis.")
-            # Still can produce a report based on global analysis
             return self._generate_final_report(image_path, image_info, global_analysis_results, [], {}, 0, False, time.time() - start_time)
 
         self.pixels_per_micron = fiber_info.get('pixels_per_micron')
@@ -446,16 +458,15 @@ class OmniFiberAnalyzer:
         return final_report
 
     def _advanced_preprocessing(self, image: np.ndarray) -> Dict[str, np.ndarray]:
-        """Generates a dictionary of multiple preprocessed images for specific tasks."""
+        """Generates a dictionary of multiple preprocessed images for specific tasks (from jill.py)."""
         logging.info("Stage 3: Advanced Preprocessing...")
         preprocessed = {'original': image.copy()}
         
         if self.config.use_tv_denoising:
             preprocessed['tv_denoised'] = (restoration.denoise_tv_chambolle(image, weight=0.1) * 255).astype(np.uint8)
         
-        # Coherence-enhancing diffusion is good for scratches
         if self.config.use_coherence_enhancing_diffusion:
-            preprocessed['coherence'] = restoration.denoise_bilateral(image, sigma_color=0.05, sigma_spatial=15, channel_axis=None)
+            preprocessed['coherence'] = (restoration.denoise_bilateral(image, sigma_color=0.05, sigma_spatial=15) * 255).astype(np.uint8)
 
         preprocessed['gaussian'] = cv2.GaussianBlur(image, (5, 5), self.config.gaussian_blur_sigma)
         preprocessed['bilateral'] = cv2.bilateralFilter(image, 9, 75, 75)
@@ -466,7 +477,7 @@ class OmniFiberAnalyzer:
         return preprocessed
 
     def _locate_fiber_and_define_zones(self, preprocessed: Dict, gray: np.ndarray) -> (Optional[Dict], Optional[Dict]):
-        """Hybrid region separation from jill.py and daniel.py."""
+        """Hybrid region separation using jill.py's ensemble and daniel.py's fallback."""
         logging.info("Stage 4: Locating Fiber and Defining Zones...")
         
         # --- Primary Method: Ensemble from jill.py ---
@@ -494,10 +505,11 @@ class OmniFiberAnalyzer:
                 candidates.append({'center': (int(x), int(y)), 'radius': int(r)})
         
         if not candidates:
-            self.warnings.append("All fiber localization methods failed. Using image center.")
+            self.warnings.append("All fiber localization methods failed. Using image center as last resort.")
             h, w = gray.shape
             best_center, best_radius = (w//2, h//2), min(h,w)//3
         else:
+            # Use median for robust estimation from all candidates
             centers = np.array([c['center'] for c in candidates])
             radii = np.array([c['radius'] for c in candidates])
             best_center = (int(np.median(centers[:, 0])), int(np.median(centers[:, 1])))
@@ -506,13 +518,13 @@ class OmniFiberAnalyzer:
         logging.info(f"Fiber localized at {best_center} with radius {best_radius}px.")
         fiber_info = {'center': best_center, 'cladding_radius_px': best_radius}
         
-        # --- Zone Definition from jill.py (Core, Cladding, Ferrule, Adhesive) ---
+        # --- Zone Definition (from jill.py, including adhesive zone) ---
         h, w = gray.shape
         y, x = np.ogrid[:h, :w]
         dist = np.sqrt((x - best_center[0])**2 + (y - best_center[1])**2)
         
         core_r = int(best_radius / self.config.cladding_core_ratio)
-        ferrule_r = int(best_radius * 1.8) # Estimate
+        ferrule_r = int(best_radius * 1.8) # Estimate based on common fiber types
         adhesive_r = int(ferrule_r * 1.1) # Estimate
         
         masks = {}
@@ -524,10 +536,9 @@ class OmniFiberAnalyzer:
         return fiber_info, masks
 
     def _run_all_detectors(self, preprocessed: Dict, zones: Dict, gray: np.ndarray) -> Dict:
-        """Runs all detection algorithms from all scripts."""
+        """Runs all detection algorithms from all scripts, replacing placeholders."""
         logging.info("Stage 5: Running Exhaustive Defect Detector Suite...")
         
-        # Detector registry
         detector_registry = {
             "do2mr": self._detect_do2mr,
             "lei": self._detect_lei,
@@ -541,7 +552,6 @@ class OmniFiberAnalyzer:
             "isolation_forest": self._detect_isolation_forest
         }
         
-        # Assign best preprocessed image to each task
         img_for_scratch = preprocessed.get('coherence', gray)
         img_for_blob = preprocessed.get('clahe', gray)
         img_for_general = preprocessed.get('bilateral', gray)
@@ -552,7 +562,6 @@ class OmniFiberAnalyzer:
             raw_masks[zone_name] = {}
             for algo_name, algo_func in detector_registry.items():
                 try:
-                    # Select appropriate image
                     if algo_name in ['lei', 'zana_klein', 'hessian', 'frangi']:
                         img_to_use = img_for_scratch
                     elif algo_name in ['log', 'mser']:
@@ -572,6 +581,7 @@ class OmniFiberAnalyzer:
         logging.info("Stage 6: Fusing detections with Ensemble Combination...")
         ensemble_masks = {}
         for zone_name, detections in raw_detections.items():
+            if not detections: continue
             vote_map = np.zeros(list(detections.values())[0].shape, dtype=np.float32)
             total_weight = 0
             for algo_name, mask in detections.items():
@@ -582,7 +592,6 @@ class OmniFiberAnalyzer:
             if total_weight > 0:
                 vote_map /= total_weight
 
-            # Threshold the combined vote map
             final_mask = (vote_map >= self.config.ensemble_vote_threshold).astype(np.uint8) * 255
             ensemble_masks[zone_name] = final_mask
         return ensemble_masks
@@ -601,15 +610,12 @@ class OmniFiberAnalyzer:
                     component_mask = (labels == i).astype(np.uint8)
                     contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     if contours:
-                        # Simple aspect ratio check for now
                         x, y, w, h = cv2.boundingRect(contours[0])
                         aspect_ratio = max(w, h) / (min(w, h) + 1e-6)
-                        if 'core' in zone_name or 'cladding' in zone_name:
-                            # Be stricter in critical zones
-                            if area < (self.config.max_defect_area_ratio * image.size) and aspect_ratio < 20:
-                                refined[labels == i] = 255
-                        else:
-                            refined[labels == i] = 255
+                        # Stricter criteria for critical zones
+                        if ('core' in zone_name or 'cladding' in zone_name) and (area > (self.config.max_defect_area_ratio * image.size) or aspect_ratio > 25):
+                            continue
+                        refined[labels == i] = 255
             refined_masks[zone_name] = refined
         return refined_masks
 
@@ -631,7 +637,6 @@ class OmniFiberAnalyzer:
             x,y,w,h = stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP], stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
             centroid = (int(centroids[i][0]), int(centroids[i][1]))
             
-            # --- Characterization from daniel.py ---
             component_mask = (labels == i).astype(np.uint8)
             contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if not contours: continue
@@ -649,26 +654,24 @@ class OmniFiberAnalyzer:
             solidity = area / (cv2.contourArea(hull) + 1e-6)
             
             pixels = image[component_mask > 0]
-            mean_intensity, std_intensity = np.mean(pixels), np.std(pixels)
+            mean_intensity, std_intensity = (np.mean(pixels), np.std(pixels)) if pixels.size > 0 else (0,0)
             
-            # Simple defect classification
-            if eccentricity > 0.95 and (w/h > 4 or h/w > 4):
+            # Simple defect classification based on morphology
+            if eccentricity > 0.95 and (w > 4*h or h > 4*w):
                 defect_type = DefectType.SCRATCH
             elif solidity < 0.8:
                 defect_type = DefectType.CHIP
             else:
                 defect_type = DefectType.DIG
 
-            # Create the Defect object
             defect = Defect(
-                id=defect_id_counter, type=defect_type, severity=DefectSeverity.LOW, # temp
+                id=defect_id_counter, type=defect_type, severity=DefectSeverity.LOW, # Temp
                 confidence=0.8, location=centroid, bbox=(x,y,w,h), area_px=area,
                 perimeter=perimeter, eccentricity=eccentricity, solidity=solidity,
                 mean_intensity=mean_intensity, std_intensity=std_intensity,
                 contrast=0, detection_methods=[], mask=component_mask
             )
             
-            # Assign severity
             defect.severity = self._assign_severity(defect)
             analyzed_defects.append(defect)
             
@@ -689,7 +692,7 @@ class OmniFiberAnalyzer:
         return quality_score, pass_fail
         
     def _assign_severity(self, defect: Defect) -> DefectSeverity:
-        """Assigns a severity level to a defect (from daniel.py)."""
+        """Assigns a severity level to a defect based on type and size (from daniel.py)."""
         if defect.type == DefectType.SCRATCH and defect.area_px > 500: return DefectSeverity.CRITICAL
         if defect.type == DefectType.CHIP and defect.area_px > 200: return DefectSeverity.HIGH
         if defect.area_px > 1000: return DefectSeverity.HIGH
@@ -697,10 +700,9 @@ class OmniFiberAnalyzer:
         return DefectSeverity.LOW
 
     def _generate_final_report(self, image_path, image_info, global_results, defects, fiber_info, quality_score, pass_fail_geom, duration) -> AnalysisReport:
-        """Generates the final, unified report."""
+        """Generates the final, unified report, considering both geometric and statistical results."""
         logging.info("Stage 9: Generating Final Report...")
         
-        # Determine final verdict
         final_verdict = "PASS"
         reason = "Image passed both statistical and geometric checks."
 
@@ -715,22 +717,15 @@ class OmniFiberAnalyzer:
         if final_verdict == "FAIL":
             recommendations.append("Fiber requires re-inspection or re-termination.")
         if any(d.type == DefectType.CONTAMINATION for d in defects):
-            recommendations.append("Contamination detected. Recommend cleaning.")
+            recommendations.append("Contamination detected. Recommend cleaning procedure.")
 
         return AnalysisReport(
-            timestamp=datetime.now().isoformat(),
-            image_path=image_path,
-            image_info=image_info,
-            global_anomaly_analysis=global_results,
-            fiber_metrics=fiber_info,
-            defects=defects,
-            quality_score=quality_score,
-            pass_fail_geometric=pass_fail_geom,
-            final_verdict=final_verdict,
-            final_verdict_reason=reason,
-            analysis_time=duration,
-            warnings=self.warnings,
-            recommendations=recommendations
+            timestamp=datetime.now().isoformat(), image_path=image_path,
+            image_info=image_info, global_anomaly_analysis=global_results,
+            fiber_metrics=fiber_info, defects=defects,
+            quality_score=quality_score, pass_fail_geometric=pass_fail_geom,
+            final_verdict=final_verdict, final_verdict_reason=reason,
+            analysis_time=duration, warnings=self.warnings, recommendations=recommendations
         )
 
     def visualize_master_results(self, image: np.ndarray, report: AnalysisReport):
@@ -740,87 +735,67 @@ class OmniFiberAnalyzer:
         fig = plt.figure(figsize=(20, 15))
         gs = GridSpec(3, 3, figure=fig, hspace=0.4, wspace=0.2)
 
-        display_img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        display_img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) if len(image.shape) == 3 else cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
 
-        # 1. Original Image
-        ax1 = fig.add_subplot(gs[0, 0])
-        ax1.imshow(display_img_rgb)
-        ax1.set_title("Original Image")
-        ax1.axis('off')
+        # Panel 1: Original Image
+        ax1 = fig.add_subplot(gs[0, 0]); ax1.imshow(display_img_rgb); ax1.set_title("Original Image"); ax1.axis('off')
 
-        # 2. Zone Masks
+        # Panel 2: Zone Masks
         ax2 = fig.add_subplot(gs[0, 1])
         zone_overlay = np.zeros_like(display_img_rgb)
         colors = {"core": (255,0,0), "cladding": (0,255,0), "ferrule": (0,0,255), "adhesive": (255,255,0)}
         for name, mask in self.intermediate_results.get('zones', {}).items():
             if name in colors: zone_overlay[mask > 0] = colors[name]
-        ax2.imshow(zone_overlay)
-        ax2.set_title("Fiber Zones")
-        ax2.axis('off')
+        ax2.imshow(zone_overlay); ax2.set_title("Fiber Zones"); ax2.axis('off')
 
-        # 3. Final Defect Overlay
+        # Panel 3: Final Defect Overlay
         ax3 = fig.add_subplot(gs[0, 2])
         defect_overlay = display_img_rgb.copy()
-        severity_colors = {
-            DefectSeverity.CRITICAL: (255,0,0), DefectSeverity.HIGH: (255,128,0),
-            DefectSeverity.MEDIUM: (255,255,0), DefectSeverity.LOW: (0,255,0)
-        }
+        severity_colors = { DefectSeverity.CRITICAL: (255,0,0), DefectSeverity.HIGH: (255,128,0), DefectSeverity.MEDIUM: (255,255,0), DefectSeverity.LOW: (0,255,0) }
         for d in report.defects:
             color = severity_colors.get(d.severity, (255,255,255))
             x,y,w,h = d.bbox
             cv2.rectangle(defect_overlay, (x,y), (x+w,y+h), color, 2)
-        ax3.imshow(defect_overlay)
-        ax3.set_title(f"Geometric Defects Found: {len(report.defects)}")
-        ax3.axis('off')
+        ax3.imshow(defect_overlay); ax3.set_title(f"Geometric Defects Found: {len(report.defects)}"); ax3.axis('off')
         
-        # 4. Global Anomaly Heatmap (jake.py)
-        ax4 = fig.add_subplot(gs[1, 0])
-        ax4.set_title("Statistical Anomaly Map (SSIM)")
-        if report.global_anomaly_analysis:
+        # Panel 4: Global Anomaly Heatmap (jake.py)
+        ax4 = fig.add_subplot(gs[1, 0]); ax4.set_title("Statistical Anomaly Map (SSIM)")
+        if report.global_anomaly_analysis and report.global_anomaly_analysis['ssim_difference_map'] is not None:
             ssim_map = report.global_anomaly_analysis['ssim_difference_map']
-            im = ax4.imshow(ssim_map, cmap='viridis')
-            fig.colorbar(im, ax=ax4, fraction=0.046, pad=0.04)
+            im = ax4.imshow(ssim_map, cmap='viridis'); fig.colorbar(im, ax=ax4, fraction=0.046, pad=0.04)
         else:
             ax4.text(0.5, 0.5, 'Not Run', ha='center', va='center')
         ax4.axis('off')
 
-        # 5. Scratch Ensemble Mask (jill.py)
-        ax5 = fig.add_subplot(gs[1, 1])
-        ax5.set_title("Ensemble Mask (All Defects)")
-        combined_ensemble = np.zeros_like(image[:,:,0])
+        # Panel 5: Ensemble Mask
+        ax5 = fig.add_subplot(gs[1, 1]); ax5.set_title("Ensemble Mask (All Defects)")
+        combined_ensemble = np.zeros_like(image[:,:,0]) if len(image.shape) == 3 else np.zeros_like(image)
         for mask in self.intermediate_results.get('ensemble_masks', {}).values():
             combined_ensemble = cv2.bitwise_or(combined_ensemble, mask)
-        ax5.imshow(combined_ensemble, cmap='hot')
-        ax5.axis('off')
+        ax5.imshow(combined_ensemble, cmap='hot'); ax5.axis('off')
 
-        # 6. Refined Defect Mask (jill.py)
-        ax6 = fig.add_subplot(gs[1, 2])
-        ax6.set_title("Final Refined Defect Mask")
-        combined_refined = np.zeros_like(image[:,:,0])
+        # Panel 6: Refined Defect Mask
+        ax6 = fig.add_subplot(gs[1, 2]); ax6.set_title("Final Refined Defect Mask")
+        combined_refined = np.zeros_like(image[:,:,0]) if len(image.shape) == 3 else np.zeros_like(image)
         for mask in self.intermediate_results.get('refined_masks', {}).values():
             combined_refined = cv2.bitwise_or(combined_refined, mask)
-        ax6.imshow(combined_refined, cmap='hot')
-        ax6.axis('off')
+        ax6.imshow(combined_refined, cmap='hot'); ax6.axis('off')
 
-        # 7. Final Report Summary
-        ax7 = fig.add_subplot(gs[2, :])
-        ax7.axis('off')
-        summary_text = (
-            f"--- OMNI-ANALYSIS REPORT ---\n\n"
-            f"Final Verdict: {report.final_verdict}\n"
-            f"Reason: {report.final_verdict_reason}\n\n"
-            f"--- Statistical Analysis ---\n"
-            f"Verdict: {report.global_anomaly_analysis.get('verdict', 'N/A')}\n"
-            f"  - Mahalanobis Distance: {report.global_anomaly_analysis.get('mahalanobis_distance', 0):.2f}\n"
-            f"  - Structural Similarity (SSIM): {report.global_anomaly_analysis.get('ssim_score', 0):.3f}\n\n"
-            f"--- Geometric Analysis ---\n"
-            f"Status: {'PASS' if report.pass_fail_geometric else 'FAIL'}\n"
-            f"  - Quality Score: {report.quality_score:.1f} / 100\n"
-            f"  - Defects Found: {len(report.defects)}\n\n"
-            f"Analysis Time: {report.analysis_time:.2f} seconds\n"
-        )
-        ax7.text(0.01, 0.95, summary_text, va='top', fontfamily='monospace',
-                 bbox=dict(boxstyle="round,pad=0.5", fc="#f0f0f0", alpha=0.8))
+        # Panel 7: Final Report Summary
+        ax7 = fig.add_subplot(gs[2, :]); ax7.axis('off')
+        anomaly_text = "N/A"
+        if report.global_anomaly_analysis:
+            anomaly_text = (f"Verdict: {report.global_anomaly_analysis.get('verdict', 'N/A')}\n"
+                            f"  - Mahalanobis Distance: {report.global_anomaly_analysis.get('mahalanobis_distance', 0):.2f}\n"
+                            f"  - Structural Similarity (SSIM): {report.global_anomaly_analysis.get('ssim_score', 0):.3f}")
+        summary_text = (f"--- OMNI-ANALYSIS REPORT ---\n\n"
+                        f"Final Verdict: {report.final_verdict}\nReason: {report.final_verdict_reason}\n\n"
+                        f"--- Statistical Analysis ---\n{anomaly_text}\n\n"
+                        f"--- Geometric Analysis ---\nStatus: {'PASS' if report.pass_fail_geometric else 'FAIL'}\n"
+                        f"  - Quality Score: {report.quality_score:.1f} / 100\n"
+                        f"  - Defects Found: {len(report.defects)}\n\n"
+                        f"Analysis Time: {report.analysis_time:.2f} seconds")
+        ax7.text(0.01, 0.95, summary_text, va='top', fontfamily='monospace', bbox=dict(boxstyle="round,pad=0.5", fc="#f0f0f0", alpha=0.8))
 
         fig.suptitle(f"OmniFiberAnalyzer Report: {os.path.basename(report.image_path)}", fontsize=20, y=0.98)
         
@@ -836,47 +811,137 @@ class OmniFiberAnalyzer:
         
         report_dict = asdict(report)
         report_dict["defects"] = [d.to_dict() for d in report.defects]
-        # Remove bulky items for cleaner JSON
-        if report_dict["global_anomaly_analysis"]:
+        if report_dict.get("global_anomaly_analysis"):
             report_dict["global_anomaly_analysis"].pop("ssim_difference_map", None)
 
         with open(filepath, 'w') as f:
             json.dump(report_dict, f, indent=2, cls=NumpyEncoder)
         logging.info(f"JSON report saved to {filepath}")
 
-    # --- Individual Algorithm Implementations (Ported) ---
-    def _detect_do2mr(self, img, mask): return feature.canny(img, sigma=1, mask=mask) # Placeholder
-    def _detect_lei(self, img, mask): return feature.canny(img, sigma=2, mask=mask) # Placeholder
-    def _detect_zana_klein(self, img, mask): return feature.canny(img, sigma=3, mask=mask) # Placeholder
+    # --- Full Implementations of Defect Detection Algorithms (Replaced Placeholders) ---
+    def _detect_do2mr(self, img, mask):
+        """Difference of Min-Max Ranking (DO2MR) from daniel.py."""
+        k = self.config.do2mr_kernel_size
+        kernel = np.ones((k, k), np.uint8)
+        img_min, img_max = cv2.erode(img, kernel), cv2.dilate(img, kernel)
+        residual = cv2.subtract(img_max, img_min)
+        mean_res, std_res = np.mean(residual[mask>0]), np.std(residual[mask>0])
+        threshold = mean_res + self.config.do2mr_threshold_gamma * std_res
+        _, defect_map = cv2.threshold(residual, threshold, 255, cv2.THRESH_BINARY)
+        return cv2.bitwise_and(defect_map, defect_map, mask=mask)
+
+    def _detect_lei(self, img, mask):
+        """Linear Enhancement Inspector (LEI) from daniel.py."""
+        l, step = self.config.lei_kernel_length, self.config.lei_angle_step
+        max_response = np.zeros_like(img, dtype=np.float32)
+        
+        for angle_deg in range(0, 180, step):
+            kernel = np.zeros((l, l), dtype=np.float32)
+            center = l // 2
+            cv2.line(kernel, (0, center), (l-1, center), 1.0, 1)
+            if np.sum(kernel) > 0: kernel /= np.sum(kernel)
+            
+            M = cv2.getRotationMatrix2D((center, center), angle_deg, 1.0)
+            rotated_kernel = cv2.warpAffine(kernel, M, (l, l))
+            
+            response = cv2.filter2D(img.astype(np.float32), -1, rotated_kernel)
+            np.maximum(max_response, response, out=max_response)
+        
+        mean_res, std_res = np.mean(max_response[mask>0]), np.std(max_response[mask>0])
+        threshold = mean_res + self.config.lei_threshold_gamma * std_res
+        _, defect_map = cv2.threshold(max_response, threshold, 255, cv2.THRESH_BINARY)
+        return cv2.bitwise_and(defect_map.astype(np.uint8), defect_map.astype(np.uint8), mask=mask)
+        
+    def _detect_zana_klein(self, img, mask):
+        """Zana & Klein scratch detection from daniel.py."""
+        l = self.config.zana_opening_length
+        reconstructed = np.zeros_like(img)
+        for angle in range(0, 180, 15):
+            selem = cv2.getStructuringElement(cv2.MORPH_RECT, (l, 1))
+            M = cv2.getRotationMatrix2D((l//2, l//2), -angle, 1)
+            rotated_kernel = cv2.warpAffine(selem, M, (l, l))
+            opened = cv2.morphologyEx(img, cv2.MORPH_OPEN, rotated_kernel)
+            np.maximum(reconstructed, opened, out=reconstructed)
+        
+        tophat = cv2.subtract(img, reconstructed)
+        if tophat.max() == 0: return np.zeros_like(img, dtype=np.uint8)
+        
+        laplacian = cv2.Laplacian(tophat, cv2.CV_64F, ksize=5)
+        laplacian[laplacian < 0] = 0
+        laplacian_norm = cv2.normalize(laplacian, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+        
+        masked_lap = laplacian_norm[mask>0]
+        threshold = np.mean(masked_lap) + self.config.zana_laplacian_threshold * np.std(masked_lap)
+        _, defect_map = cv2.threshold(laplacian_norm, threshold, 255, cv2.THRESH_BINARY)
+        return cv2.bitwise_and(defect_map, defect_map, mask=mask)
+        
     def _detect_log(self, img, mask): 
+        """Laplacian of Gaussian blob detection."""
         blobs = feature.blob_log(img, min_sigma=self.config.log_min_sigma, max_sigma=self.config.log_max_sigma,
-                                 threshold=self.config.log_threshold, overlap=0.5)
+                                 threshold=self.config.log_threshold, overlap=0.5, mask=mask)
         defect_map = np.zeros_like(img, dtype=np.uint8)
-        for y, x, r in blobs:
+        for blob in blobs:
+            y, x, r = blob
             cv2.circle(defect_map, (int(x), int(y)), int(r * 1.41), 255, -1)
         return cv2.bitwise_and(defect_map, defect_map, mask=mask)
-    def _detect_hessian(self, img, mask): return feature.hessian_matrix_det(img, sigma=2) > 0.01 # Placeholder
-    def _detect_frangi(self, img, mask): return filters.frangi(img, sigmas=self.config.frangi_scales) > 0.5 # Placeholder
+
+    def _detect_hessian(self, img, mask):
+        """Hessian matrix determinant for blob detection."""
+        det = feature.hessian_matrix_det(img, sigma=2)
+        # Thresholding based on values within the mask
+        masked_det = det[mask > 0]
+        if masked_det.size == 0: return np.zeros_like(img, dtype=np.uint8)
+        thresh = np.percentile(masked_det[masked_det > 0], 95) if np.any(masked_det > 0) else 0.01
+        defect_map = (det > thresh).astype(np.uint8) * 255
+        return cv2.bitwise_and(defect_map, defect_map, mask=mask)
+
+    def _detect_frangi(self, img, mask):
+        """Frangi vesselness filter for line-like structures."""
+        frangi_img = filters.frangi(img, sigmas=self.config.frangi_scales, black_ridges=False)
+        # Thresholding based on values within the mask
+        masked_frangi = frangi_img[mask > 0]
+        if masked_frangi.size == 0: return np.zeros_like(img, dtype=np.uint8)
+        thresh = filters.threshold_otsu(masked_frangi)
+        defect_map = (frangi_img > thresh).astype(np.uint8) * 255
+        return cv2.bitwise_and(defect_map, defect_map, mask=mask)
+
     def _detect_gradient(self, img, mask):
+        """Sobel gradient magnitude detection."""
         grad = filters.sobel(img)
-        return cv2.bitwise_and((grad > filters.threshold_otsu(grad)).astype(np.uint8) * 255, mask)
+        masked_grad = grad[mask > 0]
+        if masked_grad.size == 0: return np.zeros_like(img, dtype=np.uint8)
+        thresh = filters.threshold_otsu(masked_grad)
+        defect_map = (grad > thresh).astype(np.uint8) * 255
+        return cv2.bitwise_and(defect_map, defect_map, mask=mask)
+    
     def _detect_morphological(self, img, mask):
+        """Morphological top-hat and black-hat operations."""
         selem = morphology.disk(5)
-        opened = morphology.opening(img, selem)
-        closed = morphology.closing(img, selem)
-        return cv2.bitwise_and(np.abs(opened - closed), mask)
+        tophat = morphology.white_tophat(img, selem)
+        blackhat = morphology.black_hat(img, selem)
+        combined = cv2.add(tophat, blackhat)
+        masked_combined = combined[mask>0]
+        if masked_combined.size == 0: return np.zeros_like(img, dtype=np.uint8)
+        thresh = filters.threshold_otsu(masked_combined)
+        defect_map = (combined > thresh).astype(np.uint8) * 255
+        return cv2.bitwise_and(defect_map, defect_map, mask=mask)
+
     def _detect_mser(self, img, mask):
+        """Maximally Stable Extremal Regions (MSER) detection."""
         mser = cv2.MSER_create()
-        regions, _ = mser.detectRegions(img)
+        regions, _ = mser.detectRegions(img, mask)
         mser_mask = np.zeros_like(img)
-        for r in regions: cv2.fillPoly(mser_mask, [r], 255)
+        if regions:
+            cv2.fillPoly(mser_mask, regions, 255)
         return cv2.bitwise_and(mser_mask, mser_mask, mask=mask)
+    
     def _detect_isolation_forest(self, img, mask):
+        """Anomaly detection using Isolation Forest on pixel intensities."""
         coords = np.argwhere(mask > 0)
         pixels = img[mask > 0].reshape(-1, 1)
         if len(pixels) < 100: return np.zeros_like(img)
         
-        iso = IsolationForest(contamination=0.1, random_state=42).fit(pixels)
+        iso = IsolationForest(contamination='auto', random_state=42).fit(pixels)
         anomalies = iso.predict(pixels) == -1
         
         anomaly_map = np.zeros_like(img)
@@ -889,15 +954,20 @@ def manage_knowledge_base(config: OmniConfig) -> str:
     """Handles the interactive CLI for managing the knowledge base."""
     print("\n--- Knowledge Base Management ---")
     while True:
+        default_kb = "ultra_anomaly_kb.json"
+        print(f"The default knowledge base is '{default_kb}'.")
         choice = input(
             "Choose an option:\n"
-            "  1. Select path to an existing knowledge base (.json) file\n"
-            "  2. Add images to an existing knowledge base file\n"
+            f"  1. Use the default knowledge base ('{default_kb}')\n"
+            "  2. Select path to a different existing knowledge base (.json) file\n"
             "  3. Create a new knowledge base file from a folder of images\n"
-            "Your choice: "
-        ).strip()
+            "Your choice [1]: "
+        ).strip() or '1'
 
         if choice == '1':
+            return default_kb
+        
+        elif choice == '2':
             kb_path = input("Enter the path to your knowledge base .json file: ").strip().strip('"\'')
             if os.path.isfile(kb_path) and kb_path.endswith('.json'):
                 print(f"Using knowledge base: {kb_path}")
@@ -905,25 +975,17 @@ def manage_knowledge_base(config: OmniConfig) -> str:
             else:
                 print("Error: Invalid file path or not a .json file.")
 
-        elif choice == '2' or choice == '3':
-            if choice == '2':
-                kb_path = input("Enter the path to the knowledge base .json to update: ").strip().strip('"\'')
-                if not os.path.isfile(kb_path):
-                    print("Error: Knowledge base file not found. Cannot add to it.")
-                    continue
-            else: # choice == '3'
-                kb_path = input("Enter the desired path for your NEW knowledge base file (e.g., my_kb.json): ").strip().strip('"\'')
-
+        elif choice == '3':
+            kb_path = input("Enter the desired path for your NEW knowledge base file (e.g., my_kb.json): ").strip().strip('"\'')
             ref_dir = input("Enter the path to the folder containing reference images: ").strip().strip('"\'')
             if not os.path.isdir(ref_dir):
                 print("Error: Invalid directory path for reference images.")
                 continue
             
-            # This is a simplified approach. A real implementation would merge datasets.
-            # For this script, we will just (re)build it.
+            # Temporarily create an analyzer instance to build the KB
             temp_analyzer = KnowledgeBaseAnalyzer(config, kb_path)
             if temp_analyzer.build_comprehensive_reference_model(ref_dir):
-                print(f"Knowledge base successfully created/updated at: {kb_path}")
+                print(f"Knowledge base successfully created at: {kb_path}")
                 return kb_path
             else:
                 print("Error: Failed to build knowledge base.")
