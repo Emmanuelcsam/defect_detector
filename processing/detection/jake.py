@@ -41,7 +41,7 @@ class UltraComprehensiveMatrixAnalyzer:
                             loaded_data['statistical_model'][key] = np.array(loaded_data['statistical_model'][key], dtype=np.float64)
                 
                 self.reference_model = loaded_data
-                print(f"✓ Loaded knowledge base from {self.knowledge_base_path}")
+                # This print statement is moved to the main loop for better user experience
             except Exception as e:
                 print(f"⚠ Could not load knowledge base: {e}")
     
@@ -1800,90 +1800,122 @@ Criteria Triggered:
 
 
 def main():
-    """Main execution function."""
+    """Main execution function with improved workflow."""
     print("\n" + "="*80)
-    print("ULTRA-COMPREHENSIVE MATRIX ANOMALY DETECTION SYSTEM (v3.0 - Optimized)".center(80))
+    print("ULTRA-COMPREHENSIVE MATRIX ANOMALY DETECTION SYSTEM (v3.1 - Enhanced Workflow)".center(80))
     print("="*80)
     print("\nThis optimized system performs exhaustive comparative analysis")
     print("using only: json, os, cv2, matplotlib.pyplot, and numpy")
-    print("\nNOTE: Minimum 2 reference files required for statistical analysis.\n")
-    
+    print("\nNOTE: Minimum 2 reference files required for building a new model.\n")
+
+    # Step 1: Initialize the analyzer, which will try to load an existing knowledge base
     analyzer = UltraComprehensiveMatrixAnalyzer()
-    
-    # Step 1: Get reference directory
-    while True:
-        ref_dir = input("Enter path to folder containing reference JSON/image files: ").strip()
-        ref_dir = ref_dir.strip('"\'')  # Remove quotes if pasted
-        
-        if os.path.isdir(ref_dir):
-            break
-        else:
-            print(f"✗ Directory not found: {ref_dir}")
-            print("Please enter a valid directory path.\n")
-    
-    # Build reference model
-    if not analyzer.build_comprehensive_reference_model(ref_dir):
-        print("✗ Failed to build reference model. Exiting.")
-        return
-    
-    # Step 2: Analyze test images
+    model_loaded = False
+
+    # Check if a valid model was loaded from ultra_anomaly_kb.json
+    if analyzer.reference_model and analyzer.reference_model.get('statistical_model'):
+        model_loaded = True
+        print("✓ Existing Knowledge Base Found!")
+        timestamp = analyzer.reference_model.get('timestamp', 'N/A')
+        n_samples = analyzer.reference_model.get('statistical_model', {}).get('n_samples', 'N/A')
+        print(f"  - Last Built: {timestamp}")
+        print(f"  - Reference Samples: {n_samples}")
+        print("-" * 40)
+
+    # Step 2: Give the user a choice if a model exists
+    build_new_model = False
+    if model_loaded:
+        while True:
+            choice = input("Would you like to (U)se this existing knowledge base or (B)uild a new one? [U/B]: ").strip().upper()
+            if choice == 'B':
+                build_new_model = True
+                break
+            elif choice == 'U':
+                break
+            else:
+                print("✗ Invalid choice. Please enter 'U' or 'B'.")
+    else:
+        print("⚠ No existing knowledge base found. You must build a new one.")
+        build_new_model = True
+
+    # Step 3: Build a new model if requested or necessary
+    if build_new_model:
+        while True:
+            ref_dir = input("\nEnter path to folder containing reference JSON/image files: ").strip()
+            ref_dir = ref_dir.strip('"\'')  # Remove quotes if pasted
+
+            if os.path.isdir(ref_dir):
+                break
+            else:
+                print(f"✗ Directory not found: {ref_dir}")
+                print("Please enter a valid directory path.\n")
+
+        # Build reference model
+        if not analyzer.build_comprehensive_reference_model(ref_dir):
+            print("✗ Failed to build reference model. Exiting.")
+            return
+
+    # At this point, a model is guaranteed to be ready for use.
+    print("\n✓ Reference model is ready for analysis.")
+
+    # Step 4: Analyze test images
     while True:
         print("\n" + "-"*80)
         test_path = input("\nEnter path to test image/JSON file (or 'quit' to exit): ").strip()
         test_path = test_path.strip('"\'')  # Remove quotes
-        
+
         if test_path.lower() == 'quit':
             break
-        
+
         if not os.path.isfile(test_path):
             print(f"✗ File not found: {test_path}")
             continue
-        
+
         # Perform analysis
         print("\nStarting analysis...")
         results = analyzer.detect_anomalies_comprehensive(test_path)
-        
+
         if results:
             print(f"\n✓ Analysis completed!")
-            
+
             # Print summary
             print("\n" + "="*70)
             print("ANALYSIS SUMMARY")
             print("="*70)
-            
+
             verdict = results['verdict']
             print(f"Status: {'ANOMALOUS' if verdict['is_anomalous'] else 'NORMAL'}")
             print(f"Confidence: {verdict['confidence']:.1%}")
             print(f"Mahalanobis Distance: {results['global_analysis']['mahalanobis_distance']:.2f}")
             print(f"SSIM Score: {results['structural_analysis']['ssim']:.3f}")
             print(f"Anomaly Regions: {len(results['local_analysis']['anomaly_regions'])}")
-            
+
             defects = results['specific_defects']
             print(f"Specific Defects: {len(defects['scratches'])} scratches, "
                   f"{len(defects['digs'])} digs, {len(defects['blobs'])} blobs")
-            
+
             # Generate outputs
             base_name = os.path.splitext(os.path.basename(test_path))[0]
-            
+
             # Create timestamp for unique filenames
             import time
             timestamp = time.strftime("%Y%m%d_%H%M%S")
-            
+
             # Visualization
             viz_path = f"anomaly_analysis_{base_name}_{timestamp}.png"
             analyzer.visualize_comprehensive_results(results, viz_path)
-            
+
             # Report
             report_path = f"anomaly_report_{base_name}_{timestamp}.txt"
             analyzer.generate_detailed_report(results, report_path)
-            
+
             print(f"\n✓ Results saved:")
             print(f"  - Visualization: {viz_path}")
             print(f"  - Simple image: {viz_path.replace('.png', '_simple.png')}")
             print(f"  - Report: {report_path}")
         else:
             print("✗ Analysis failed.")
-    
+
     print("\n" + "="*80)
     print("Thank you for using the Ultra-Comprehensive Anomaly Detection System!")
     print("="*80 + "\n")
