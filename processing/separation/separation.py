@@ -110,7 +110,8 @@ class UnifiedSegmentationSystem:
             'threshold_seperation.py',
             'adaptive_intensity_approach.py',
             'computational_separation.py',
-            'gradient_approach.py'
+            'gradient_approach.py',
+            'bright_core_extractor.py' # ADDED FOR INTEGRATION
         ]
         
         for method_file in method_files:
@@ -134,7 +135,8 @@ class UnifiedSegmentationSystem:
         h, w = image_shape
         
         # Validate parameters
-        if center is None or core_radius is None or cladding_radius is None:
+        # ADJUSTED FOR INTEGRATION: Changed 'cladding_radius is None' to check if it's a valid number for methods that provide it
+        if center is None or core_radius is None:
             return None
             
         cx, cy = center
@@ -142,19 +144,26 @@ class UnifiedSegmentationSystem:
         # Check if parameters are reasonable
         if not (0 <= cx < w and 0 <= cy < h):
             return None
-        if core_radius <= 0 or cladding_radius <= 0:
+        if core_radius <= 0: # Check only core radius as it's guaranteed
             return None
-        if core_radius > min(w, h) or cladding_radius > min(w, h):
+        if core_radius > min(w, h):
             return None
-            
+
         # Create masks
         y_grid, x_grid = np.ogrid[:h, :w]
         dist_from_center = np.sqrt((x_grid - cx)**2 + (y_grid - cy)**2)
         
         core_mask = (dist_from_center <= core_radius).astype(np.uint8)
-        cladding_mask = ((dist_from_center > core_radius) & 
-                        (dist_from_center <= cladding_radius)).astype(np.uint8)
-        ferrule_mask = (dist_from_center > cladding_radius).astype(np.uint8)
+
+        # ADJUSTED FOR INTEGRATION: Handle case where cladding is not found by a method
+        if cladding_radius is not None and cladding_radius > core_radius:
+            cladding_mask = ((dist_from_center > core_radius) & 
+                            (dist_from_center <= cladding_radius)).astype(np.uint8)
+            ferrule_mask = (dist_from_center > cladding_radius).astype(np.uint8)
+        else:
+            # If no valid cladding, everything outside the core is ferrule
+            cladding_mask = np.zeros_like(core_mask)
+            ferrule_mask = (dist_from_center > core_radius).astype(np.uint8)
         
         return {
             'core': core_mask,
@@ -174,6 +183,7 @@ import sys
 import json
 import os
 import numpy as np
+from pathlib import Path
 sys.path.insert(0, r"{self.methods_dir}")
 
 # Method-specific imports and execution
@@ -197,7 +207,6 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
             elif method_name == 'segmentation':
                 f.write(f"""
 from segmentation import run_segmentation_pipeline, DEFAULT_CONFIG
-from pathlib import Path
 priors = {json.dumps(self.dataset_stats)}
 seg_result = run_segmentation_pipeline(Path(r"{image_path}"), priors, DEFAULT_CONFIG, Path(r"{temp_output}"))
 if seg_result and 'result' in seg_result:
@@ -229,6 +238,14 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
                 f.write(f"""
 from gradient_approach import segment_with_gradient
 result = segment_with_gradient(r"{image_path}", r"{temp_output}")
+with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
+    json.dump(result, outf)
+""")
+            # ADDED FOR INTEGRATION
+            elif method_name == 'bright_core_extractor':
+                f.write(f"""
+from bright_core_extractor import analyze_core
+result = analyze_core(r"{image_path}", r"{temp_output}")
 with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
     json.dump(result, outf)
 """)

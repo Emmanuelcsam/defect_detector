@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import glob
+from typing import Dict, Any # ADDED FOR INTEGRATION
 
 class TunedFiberAnalyzer:
     """
@@ -71,7 +72,7 @@ class TunedFiberAnalyzer:
         self.segmented_mask = None
         self.results = {}
 
-    def run_full_pipeline(self) -> bool:
+    def run_full_pipeline(self) -> Dict[str, Any]: # ADJUSTED FOR INTEGRATION: Returns a dictionary
         """Executes the entire data-tuned analysis pipeline."""
         print(f"\nProcessing {self.image_path.name}...")
 
@@ -81,7 +82,8 @@ class TunedFiberAnalyzer:
         circles = self._find_circles(processed_image)
         if circles is None:
             print("  - Failure: No circles detected.")
-            return False
+            # ADJUSTED FOR INTEGRATION: Return a standardized dictionary
+            return {'success': False, 'error': 'No circles detected'}
 
         for circle in circles:
             is_valid, debug_data = self._validate_with_local_contrast(circle)
@@ -89,14 +91,24 @@ class TunedFiberAnalyzer:
                 print(f"  + Success: Validated circle via local contrast at {self.center}, R={self.radius}px.")
                 self._create_precise_mask()
                 self._analyze_final_segment()
-                return True
+                # ADJUSTED FOR INTEGRATION: Return a standardized success dictionary
+                return {
+                    'success': True,
+                    'center': self.center,
+                    'core_radius': self.radius,
+                    'cladding_radius': None, # This method only finds the core
+                    'confidence': 1.0, # High confidence as it passed local contrast
+                    'details': self.results
+                }
             else:
                 # If validation fails, save a debug image if the mode is on
                 if self.debug_mode:
                     self._save_debug_image(circle, debug_data)
 
         print(f"  - Failure: Found {len(circles)} circle(s), but none passed local contrast validation.")
-        return False
+        # ADJUSTED FOR INTEGRATION: Return a standardized dictionary
+        return {'success': False, 'error': f'Found {len(circles)} circles, but none passed validation'}
+
 
     def _find_circles(self, image: np.ndarray) -> np.ndarray | None:
         """Detects circles using the Circular Hough Transform."""
@@ -223,6 +235,19 @@ class TunedFiberAnalyzer:
         results_df.to_csv(results_csv_path, mode='a', header=not results_csv_path.exists(), index=False)
         print(f"  -> Outputs saved to '{output_dir.resolve()}'")
 
+# ADDED FOR INTEGRATION: Wrapper function to be called by the main system
+def analyze_core(image_path_str: str, output_dir_str: str) -> dict:
+    """
+    A wrapper function to make TunedFiberAnalyzer compatible with the
+    UnifiedSegmentationSystem. It is designed to be called from a subprocess.
+    """
+    try:
+        analyzer = TunedFiberAnalyzer(Path(image_path_str), debug_mode=False)
+        result_dict = analyzer.run_full_pipeline()
+        return result_dict
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
 def main():
     """Main function to run the interactive analyzer."""
     print("="*80)
@@ -261,7 +286,8 @@ def main():
 
             for img_path in image_paths:
                 analyzer = TunedFiberAnalyzer(img_path, debug_mode=DEBUG_MODE)
-                if analyzer.run_full_pipeline():
+                # ADJUSTED FOR INTEGRATION: Check success from the returned dictionary
+                if analyzer.run_full_pipeline().get('success'):
                     analyzer.save_outputs(output_dir)
 
         except (KeyboardInterrupt, EOFError):
