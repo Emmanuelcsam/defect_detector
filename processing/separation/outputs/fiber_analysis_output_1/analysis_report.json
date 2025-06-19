@@ -1,0 +1,34 @@
+{
+    "image_info": {
+        "width": 1152,
+        "height": 864,
+        "center": {
+            "x": 553.4852956805587,
+            "y": 436.4905336673499
+        }
+    },
+    "boundaries": [],
+    "regions": [
+        {
+            "type": "unknown",
+            "radial_range": [
+                0,
+                426
+            ],
+            "intensity_stats": {
+                "mean": 180.60093896713616,
+                "median": 189.0,
+                "std": 31.125565764958605,
+                "min": 97.0,
+                "max": 214.0
+            },
+            "gradient_mean": 2.6559055541194123,
+            "variance_mean": 0.505812406539917
+        }
+    ],
+    "pixel_counts": {
+        "core": 0,
+        "cladding": 0,
+        "ferrule": 0
+    }
+}

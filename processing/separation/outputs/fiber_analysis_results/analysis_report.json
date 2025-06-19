@@ -1,0 +1,71 @@
+{
+    "image_properties": {
+        "width": 1024,
+        "height": 1024,
+        "channels": 3
+    },
+    "geometric_measurements": {
+        "core": {
+            "center": [
+                504.6087339622946,
+                506.39536576894375
+            ],
+            "radius_pixels": 248.68711986998923,
+            "diameter_pixels": 497.37423973997846,
+            "area_pixels": 194292.6885831036,
+            "confidence": 0.0325385029795291
+        },
+        "cladding": {
+            "center": [
+                504.6087339622946,
+                506.39536576894375
+            ],
+            "radius_pixels": 249.21132446905688,
+            "diameter_pixels": 498.42264893811375,
+            "area_pixels": 195112.64632152097,
+            "confidence": 0.03240751863151643
+        },
+        "concentricity_offset_pixels": 0.12155912772431264
+    },
+    "quality_metrics": {
+        "edge_sharpness": {
+            "average_gradient": 22.825251084125576,
+            "maximum_gradient": 1431.687852861927,
+            "sharpness_score": 0.08951078856519834
+        },
+        "circularity": {
+            "core": 0.8973375522456585,
+            "cladding": 0.8956919153059121
+        },
+        "surface_roughness": {
+            "core": 0.7387167297022447,
+            "cladding": 1.1668063836383689
+        }
+    },
+    "statistics": {
+        "core": {
+            "mean_intensity": 75.75205093035895,
+            "std_intensity": 104.65981574686134,
+            "min_intensity": 0.0,
+            "max_intensity": 235.0,
+            "median_intensity": 0.0,
+            "pixel_count": 193205
+        },
+        "cladding": {
+            "mean_intensity": 95.86321989528795,
+            "std_intensity": 2.307002338391185,
+            "min_intensity": 91.0,
+            "max_intensity": 101.0,
+            "median_intensity": 96.0,
+            "pixel_count": 1528
+        },
+        "ferrule": {
+            "mean_intensity": 169.8020397192458,
+            "std_intensity": 22.342513871085504,
+            "min_intensity": 21.0,
+            "max_intensity": 211.0,
+            "median_intensity": 176.0,
+            "pixel_count": 853843
+        }
+    }
+}
