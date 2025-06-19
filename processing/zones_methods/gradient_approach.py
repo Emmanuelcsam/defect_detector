@@ -109,17 +109,16 @@ class FiberOpticSegmenter:
         
         # Remove small objects - FIXED for boolean indexing
         try:
-            # Convert to proper boolean type
-            bright_mask = bright_mask.astype(bool)
-            # Check if array is 2D as expected by remove_small_objects
-            if bright_mask.ndim == 2:
-                bright_mask = remove_small_objects(bright_mask, min_size=100)
-            else:
-                # If not 2D, skip remove_small_objects
-                pass
+            # Ensure the mask is a boolean type for scikit-image
+            cleaned_mask = remove_small_objects(bright_mask.astype(bool), min_size=100)
+            # Only use the cleaned mask if it's valid and not empty
+            if cleaned_mask.any():
+                bright_mask = cleaned_mask
         except Exception as e:
-            # If remove_small_objects fails, continue without it
-            print(f"Warning: Could not remove small objects: {e}")
+            # If cleaning fails for any reason (e.g., on abstract processed images),
+            # just log a warning and proceed with the original thresholded mask.
+            # This prevents the crash.
+            print(f"Warning: 'remove_small_objects' failed, using original mask. Error: {e}")
         
         if np.sum(bright_mask) == 0:
             return None, 0

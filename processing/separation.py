@@ -284,7 +284,13 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
                 else:
                     result.error = method_result.get('error', 'Unknown error')
             else:
-                result.error = f"No result file generated. Stderr: {process.stderr}"
+                error_details = (
+                "No result file generated. This usually means the subprocess crashed on import.\n"
+                f"--> Exit Code: {process.returncode}\n"
+                f"--> Stderr: {process.stderr.strip()}\n"
+                f"--> Stdout: {process.stdout.strip()}"
+                )
+                result.error = error_details
                 
         except subprocess.TimeoutExpired:
             result.error = "Method timed out after 60 seconds"
