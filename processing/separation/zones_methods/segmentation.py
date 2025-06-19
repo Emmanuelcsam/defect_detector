@@ -18,7 +18,6 @@ import shlex # Used for parsing file paths with spaces
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 
 # --- Configuration ---
-# Move "magic numbers" to a central, editable configuration dictionary.
 DEFAULT_CONFIG = {
     "center_finding": {
         "blur_ksize": (11, 11),
@@ -58,7 +57,7 @@ DEFAULT_CONFIG = {
     }
 }
 
-# --- 1. I/O and Utility Functions (Unchanged) ---
+# --- 1. I/O and Utility Functions ---
 
 class NumpyEncoder(json.JSONEncoder):
     """Custom encoder for numpy data types for JSON serialization."""
@@ -78,7 +77,6 @@ def load_image(path: Path) -> Optional[np.ndarray]:
     
     img = cv2.imread(str(path))
     if img is None:
-        print(f"✗ Could not read image: {path}")
         return None
     return img
 
@@ -108,10 +106,9 @@ def load_image_from_json(path: Path) -> Optional[np.ndarray]:
         
         return matrix
     except (Exception, KeyError) as e:
-        print(f"✗ Error loading JSON matrix {path.name}: {e}")
         return None
 
-# --- 2. Core Analysis Functions (Unchanged) ---
+# --- 2. Core Analysis Functions ---
 
 def find_robust_center(gray_img: np.ndarray, config: Dict) -> Tuple[float, float]:
     """Finds the fiber center using a weighted average of two methods."""
@@ -226,14 +223,12 @@ def analyze_with_ransac_histogram(
         return radii
     return None
 
-# --- 3. Main Pipeline Orchestration (Unchanged) ---
+# --- 3. Main Pipeline Orchestration ---
 
 def get_priors_from_dataset(dataset_path: Path) -> Dict[str, float]:
     """Loads segmentation priors from a directory of JSON reports."""
-    print(f"\nLoading segmentation dataset from: {dataset_path}")
     json_files = list(dataset_path.glob("*_seg_report.json"))
     if not json_files:
-        print("  - No dataset reports found. Using default parameters.")
         return {}
         
     radii_ratios, thicknesses = [], []
@@ -252,21 +247,34 @@ def get_priors_from_dataset(dataset_path: Path) -> Dict[str, float]:
         'avg_min_cladding_thickness': np.percentile(thicknesses, 25),
         'avg_min_core_radius': np.percentile(thicknesses, 25)
     }
-    print(f"✓ Successfully loaded priors from {len(json_files)} reports.")
     return priors
 
 def run_segmentation_pipeline(
     image_path: Path, 
     priors: Dict[str, float],
-    config: Dict[str, Any] = DEFAULT_CONFIG
+    config: Dict[str, Any] = DEFAULT_CONFIG,
+    output_dir: Optional[Path] = None
 ) -> Optional[Dict[str, Any]]:
-    """Executes the full fiber segmentation pipeline."""
-    print("\n" + "="*70)
-    print(f"Analyzing: {image_path.name}")
-    print("="*70)
+    """Executes the full fiber segmentation pipeline - modified for unified system."""
+    
+    # Initialize result dictionary
+    result = {
+        'method': 'segmentation',
+        'image_path': str(image_path),
+        'success': False,
+        'center': None,
+        'core_radius': None,
+        'cladding_radius': None,
+        'confidence': 0.0
+    }
 
     original_img = load_image(image_path)
-    if original_img is None: return None
+    if original_img is None: 
+        result['error'] = f"Could not load image: {image_path}"
+        if output_dir:
+            with open(output_dir / f'{image_path.stem}_segmentation_result.json', 'w') as f:
+                json.dump(result, f, indent=4, cls=NumpyEncoder)
+        return result
     
     h, w = original_img.shape[:2]
     is_color = len(original_img.shape) == 3
@@ -279,7 +287,6 @@ def run_segmentation_pipeline(
     max_clad_r = w * 0.5 * avg_clad_ratio
 
     center = find_robust_center(gray_img, config)
-    print(f"  - Robust center found at ({center[0]:.1f}, {center[1]:.1f})")
 
     all_boundaries = []
     analyses = {
@@ -288,16 +295,16 @@ def run_segmentation_pipeline(
         "RANSAC": analyze_with_ransac_histogram(gray_img, center, min_core_r, max_clad_r, min_clad_thick, config)
     }
     
-    for name, result in analyses.items():
-        if result:
-            all_boundaries.append(result)
-            print(f"  - {name} method found boundaries at: {np.round(result, 1)}")
-        else:
-            print(f"  - {name} method failed to find boundaries.")
+    for name, res in analyses.items():
+        if res:
+            all_boundaries.append(res)
     
     if len(all_boundaries) < 2:
-        print("✗ Not enough evidence to form a consensus. Aborting.")
-        return None
+        result['error'] = "Not enough evidence to form a consensus"
+        if output_dir:
+            with open(output_dir / f'{image_path.stem}_segmentation_result.json', 'w') as f:
+                json.dump(result, f, indent=4, cls=NumpyEncoder)
+        return result
 
     inner_radii = [b[0] for b in all_boundaries]
     outer_radii = [b[1] for b in all_boundaries]
@@ -305,40 +312,70 @@ def run_segmentation_pipeline(
     outer_boundary = int(np.median(outer_radii))
     
     if inner_boundary >= outer_boundary:
-        print("✗ Consensus boundaries are invalid (inner >= outer). Aborting.")
-        return None
-
-    print(f"  - Consensus: Core={inner_boundary}px, Cladding={outer_boundary}px")
+        result['error'] = "Consensus boundaries are invalid (inner >= outer)"
+        if output_dir:
+            with open(output_dir / f'{image_path.stem}_segmentation_result.json', 'w') as f:
+                json.dump(result, f, indent=4, cls=NumpyEncoder)
+        return result
     
-    Y, X = np.ogrid[:h, :w]
-    dist_map = np.sqrt((X - center[0])**2 + (Y - center[1])**2)
+    # Set successful results
+    result['success'] = True
+    result['center'] = (int(center[0]), int(center[1]))
+    result['core_radius'] = inner_boundary
+    result['cladding_radius'] = outer_boundary
+    result['confidence'] = 0.9  # High confidence for consensus method
     
-    masks = {
-        'core': (dist_map <= inner_boundary).astype(np.uint8),
-        'cladding': ((dist_map > inner_boundary) & (dist_map <= outer_boundary)).astype(np.uint8),
-        'ferrule': (dist_map > outer_boundary).astype(np.uint8)
-    }
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, config['final_refinement']['morph_ksize'])
-    for name in masks:
-        masks[name] = cv2.morphologyEx(masks[name], cv2.MORPH_CLOSE, kernel)
-        masks[name] = cv2.morphologyEx(masks[name], cv2.MORPH_OPEN, kernel)
-        masks[name] *= 255
+    # Save results if output directory specified
+    if output_dir:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(exist_ok=True)
+        base_filename = image_path.stem
         
-    regions = {name: cv2.bitwise_and(original_img, original_img, mask=mask) for name, mask in masks.items()}
+        # Save result data
+        with open(output_dir / f'{base_filename}_segmentation_result.json', 'w') as f:
+            json.dump(result, f, indent=4, cls=NumpyEncoder)
+            
+        # Create and save visualization
+        Y, X = np.ogrid[:h, :w]
+        dist_map = np.sqrt((X - center[0])**2 + (Y - center[1])**2)
+        
+        masks = {
+            'core': (dist_map <= inner_boundary).astype(np.uint8),
+            'cladding': ((dist_map > inner_boundary) & (dist_map <= outer_boundary)).astype(np.uint8),
+            'ferrule': (dist_map > outer_boundary).astype(np.uint8)
+        }
 
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, config['final_refinement']['morph_ksize'])
+        for name in masks:
+            masks[name] = cv2.morphologyEx(masks[name], cv2.MORPH_CLOSE, kernel)
+            masks[name] = cv2.morphologyEx(masks[name], cv2.MORPH_OPEN, kernel)
+            masks[name] *= 255
+            
+        regions = {name: cv2.bitwise_and(original_img, original_img, mask=mask) for name, mask in masks.items()}
+        
+        # Save regions
+        cv2.imwrite(str(output_dir / f"{base_filename}_segmentation_core.png"), regions['core'])
+        cv2.imwrite(str(output_dir / f"{base_filename}_segmentation_cladding.png"), regions['cladding'])
+        cv2.imwrite(str(output_dir / f"{base_filename}_segmentation_ferrule.png"), regions['ferrule'])
+        
+        # Create annotated image
+        annotated = original_img.copy()
+        cv2.circle(annotated, (int(center[0]), int(center[1])), 3, (0, 255, 255), -1)
+        cv2.circle(annotated, (int(center[0]), int(center[1])), inner_boundary, (0, 255, 0), 2)
+        cv2.circle(annotated, (int(center[0]), int(center[1])), outer_boundary, (0, 0, 255), 2)
+        cv2.imwrite(str(output_dir / f"{base_filename}_segmentation_annotated.png"), annotated)
+    
+    # Return full pipeline result for compatibility
     return {
         'image_info': {'path': str(image_path), 'width': w, 'height': h},
         'original_image': original_img,
         'final_center': {'x': center[0], 'y': center[1]},
         'consensus_boundaries': [inner_boundary, outer_boundary],
-        'masks': masks,
-        'regions': regions
+        'result': result  # Include standardized result
     }
 
 def generate_segmentation_report(results: Dict, output_prefix: Path):
     """Saves output images and a summary visualization."""
-    print("\n✓ Generating segmentation report...")
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
     
     for name, image in results['regions'].items():
@@ -371,123 +408,24 @@ def generate_segmentation_report(results: Dict, output_prefix: Path):
     report_path = f"{output_prefix}_segmentation_summary.png"
     plt.savefig(report_path)
     plt.close()
-    print(f"✓ Report saved: {report_path}")
 
-# --- 4. NEW Interactive Command-Line Interface ---
-
-def ask_question(prompt: str, valid_answers: List[str] = ['y', 'n']) -> str:
-    """Asks a question and waits for a valid answer."""
-    while True:
-        answer = input(f"{prompt} ({'/'.join(valid_answers)}): ").lower().strip()
-        if answer in valid_answers:
-            return answer
-        print(f"✗ Invalid input. Please enter one of {valid_answers}.")
-
-def ask_for_path(prompt: str, check_is_dir: bool = False, create_dir: bool = False) -> Optional[Path]:
-    """Asks for a single path and optionally validates it."""
-    while True:
-        path_str = input(f"{prompt}: ").strip().strip('"\'')
-        if not path_str:
-            print("✗ Path cannot be empty.")
-            continue
-        
-        path = Path(path_str)
-        if check_is_dir and not path.is_dir():
-            print(f"✗ Error: Directory not found at '{path}'")
-            continue
-        
-        if create_dir:
-            path.mkdir(parents=True, exist_ok=True)
-            print(f"✓ Directory '{path}' ensured to exist.")
-
-        return path
-
-def ask_for_multiple_paths(prompt: str) -> List[Path]:
-    """Asks for one or more file paths, handling spaces and quotes."""
-    while True:
-        paths_str = input(f"{prompt}\n(You can enter multiple paths separated by spaces; use quotes for paths with spaces):\n> ").strip()
-        if not paths_str:
-            print("✗ Please enter at least one path.")
-            continue
-        
-        # Use shlex to handle quoted paths correctly
-        path_parts = shlex.split(paths_str)
-        
-        # Validate all paths
-        validated_paths = []
-        all_valid = True
-        for p_str in path_parts:
-            path = Path(p_str)
-            if not path.is_file():
-                print(f"✗ Error: File not found at '{path}'")
-                all_valid = False
-            else:
-                validated_paths.append(path)
-        
-        if all_valid:
-            return validated_paths
-
+# Simplified main function for standalone testing
 def main():
-    """Main function with interactive question-and-answer workflow."""
-    print("\n" + "="*80)
-    print("Welcome to the Advanced Fiber Optic Segmentation System".center(80))
-    print("="*80)
-    
-    dataset_path: Optional[Path] = None
-    priors: Dict[str, float] = {}
-    add_to_dataset: bool = False
-
-    # --- Dataset Questions ---
-    if ask_question("Do you want to create a new segmentation dataset?") == 'y':
-        dataset_path = ask_for_path("Enter the path for the new dataset directory", create_dir=True)
-        add_to_dataset = True # Implicitly, if you create a dataset, you want to add to it.
-        print(f"✓ A new dataset will be created and saved at '{dataset_path}'.")
+    """Main function for standalone testing"""
+    import sys
+    if len(sys.argv) > 1:
+        image_path = Path(sys.argv[1])
     else:
-        if ask_question("Do you want to use or add to an existing dataset?") == 'y':
-            dataset_path = ask_for_path("What is the path to that dataset?", check_is_dir=True)
-            if dataset_path:
-                priors = get_priors_from_dataset(dataset_path)
-                # Ask if they want to add new results back to this dataset
-                if ask_question("Do you want to add the new analysis results to this dataset?") == 'y':
-                    add_to_dataset = True
-        else:
-            print("\nℹ️ Proceeding with default parameters (no dataset specified).")
-
-    # --- Image Analysis Questions ---
-    image_paths = ask_for_multiple_paths("What is the path of the image(s) or JSON file(s) you want to analyze?")
+        image_path = Path(input("Enter image path: ").strip().strip('"').strip("'"))
     
-    output_dir = Path("segmentation_results")
-    output_dir.mkdir(exist_ok=True)
-
-    # --- Processing Loop ---
-    for img_path in image_paths:
-        try:
-            results = run_segmentation_pipeline(img_path, priors)
-            if results:
-                # Always generate the main visual report
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                output_prefix = output_dir / f"{img_path.stem}_{timestamp}"
-                generate_segmentation_report(results, output_prefix)
-
-                # Conditionally save the data report to the dataset
-                if add_to_dataset and dataset_path:
-                    report_data = {
-                        'consensus_boundaries': results['consensus_boundaries'],
-                        'image_info': results['image_info']
-                    }
-                    report_filename = dataset_path / f"{img_path.stem}_seg_report.json"
-                    with open(report_filename, 'w') as f:
-                        json.dump(report_data, f, cls=NumpyEncoder, indent=4)
-                    print(f"✓ Saved segmentation priors to dataset for {img_path.name}")
-
-        except Exception as e:
-            print(f"✗ FATAL ERROR during segmentation of {img_path.name}: {e}")
-            import traceback
-            traceback.print_exc()
-
-    print("\n" + "="*80)
-    print("Processing complete. Goodbye!".center(80))
-    print("="*80)
+    priors = {}  # Use defaults
+    result = run_segmentation_pipeline(image_path, priors, output_dir=Path("output_segmentation"))
+    
+    if result and result.get('result', {}).get('success'):
+        r = result['result']
+        print(f"Success! Center: {r['center']}, Core: {r['core_radius']}, Cladding: {r['cladding_radius']}")
+    else:
+        print(f"Failed: {result.get('result', {}).get('error', 'Unknown error')}")
 
 
 if __name__ == '__main__':

@@ -1,0 +1,12 @@
+{
+    "avg_core_radius_ratio": 0.15,
+    "avg_cladding_radius_ratio": 0.5,
+    "avg_center_offset": 0.02,
+    "method_scores": {
+        "guess_approach": 1.477455443789063,
+        "segmentation": 1.477455443789063,
+        "computational_separation": 1.477455443789063,
+        "gradient_approach": 0.6634204312890623
+    },
+    "method_accuracy": {}
+}

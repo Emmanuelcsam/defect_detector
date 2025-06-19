@@ -1,0 +1,69 @@
+{
+    "consensus_strength": {
+        "core": 0.0005699793497721354,
+        "cladding": 0.011072794596354166,
+        "ferrule": 0.32169055938720703
+    },
+    "contributing_methods": [
+        "guess_approach",
+        "segmentation",
+        "computational_separation"
+    ],
+    "num_valid_results": 3,
+    "method_weights": {
+        "guess_approach": 0.9116296875000002,
+        "segmentation": 1.0939556250000002,
+        "computational_separation": 0.9724050000000002
+    },
+    "all_results": [
+        {
+            "method_name": "guess_approach",
+            "center": [
+                506.0,
+                507.0
+            ],
+            "core_radius": 203.0,
+            "cladding_radius": 289.0,
+            "confidence": 0.75,
+            "execution_time": 1.558114767074585,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "segmentation",
+            "center": [
+                507.0,
+                505.0
+            ],
+            "core_radius": 24.0,
+            "cladding_radius": 108.0,
+            "confidence": 0.9,
+            "execution_time": 0.9265084266662598,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "computational_separation",
+            "center": [
+                502.0,
+                496.0
+            ],
+            "core_radius": 201.0,
+            "cladding_radius": 335.0,
+            "confidence": 0.8,
+            "execution_time": 1.1423654556274414,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "gradient_approach",
+            "center": null,
+            "core_radius": null,
+            "cladding_radius": null,
+            "confidence": 0.0,
+            "execution_time": 0.903388500213623,
+            "error": "boolean index did not match indexed array along axis 0; size of axis is 1 but size of corresponding boolean axis is 1024",
+            "has_masks": false
+        }
+    ]
+}

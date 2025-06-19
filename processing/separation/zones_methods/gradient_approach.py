@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 import os
+import json
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from scipy import ndimage
 from scipy.signal import find_peaks, savgol_filter
@@ -15,6 +18,7 @@ class FiberOpticSegmenter:
     """
     Universal fiber optic endface segmentation that doesn't rely on Hough circles.
     Uses multiple robust methods to ensure accurate segmentation across different images.
+    Modified for unified system integration.
     """
     
     def __init__(self, image_path, output_dir='output_universal'):
@@ -27,13 +31,26 @@ class FiberOpticSegmenter:
         self.core_radius = None
         self.cladding_radius = None
         
+        # Initialize result dictionary
+        self.result = {
+            'method': 'gradient_approach',
+            'image_path': image_path,
+            'success': False,
+            'center': None,
+            'core_radius': None,
+            'cladding_radius': None,
+            'confidence': 0.0
+        }
+        
     def load_and_preprocess(self):
         """Load image and apply preprocessing"""
         if not os.path.exists(self.image_path):
+            self.result['error'] = f"Image not found: {self.image_path}"
             raise FileNotFoundError(f"Image not found: {self.image_path}")
             
         self.original = cv2.imread(self.image_path)
         if self.original is None:
+            self.result['error'] = f"Could not read image: {self.image_path}"
             raise ValueError(f"Could not read image: {self.image_path}")
             
         self.gray = cv2.cvtColor(self.original, cv2.COLOR_BGR2GRAY)
@@ -41,9 +58,6 @@ class FiberOpticSegmenter:
         # Enhance contrast using CLAHE
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         self.enhanced = clahe.apply(self.gray)
-        
-        print(f"Loaded image: {self.image_path}")
-        print(f"Dimensions: {self.gray.shape}")
         
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -80,15 +94,12 @@ class FiberOpticSegmenter:
             # Fallback to image center
             h, w = self.gray.shape
             self.center = (w//2, h//2)
-            print("Warning: Using image center as fallback")
         else:
             # Weighted average of all detected centers
             centers = np.array(centers)
             weights = np.array(weights)
             weights = weights / weights.sum()
             self.center = np.average(centers, axis=0, weights=weights).astype(int)
-            
-        print(f"Final center: {self.center}")
         
     def _brightness_centroid(self):
         """Find center using brightness-weighted centroid"""
@@ -96,15 +107,25 @@ class FiberOpticSegmenter:
         threshold = np.percentile(self.enhanced, 85)
         bright_mask = self.enhanced > threshold
         
-        # Remove small objects
-        bright_mask = remove_small_objects(bright_mask, min_size=100)
+        # Remove small objects - ensure we're working with boolean array
+        try:
+            from skimage import __version__
+            # For newer versions of scikit-image
+            bright_mask = bright_mask.astype(bool)
+            bright_mask = remove_small_objects(bright_mask, min_size=100)
+        except:
+            # Fallback method
+            pass
         
         if np.sum(bright_mask) == 0:
             return None, 0
             
         # Calculate centroid
         y_coords, x_coords = np.where(bright_mask)
-        weights = self.enhanced[bright_mask]
+        if len(y_coords) == 0 or len(x_coords) == 0:
+            return None, 0
+            
+        weights = self.enhanced[bright_mask].flatten()
         
         cx = np.average(x_coords, weights=weights)
         cy = np.average(y_coords, weights=weights)
@@ -205,61 +226,68 @@ class FiberOpticSegmenter:
     
     def _edge_based_center(self):
         """Find center using edge points and RANSAC-like approach"""
-        # Detect edges
-        edges = canny(self.enhanced, sigma=2.0, low_threshold=0.1, high_threshold=0.3)
-        edge_points = np.column_stack(np.where(edges))[:, ::-1]  # Convert to (x, y)
-        
-        if len(edge_points) < 10:
-            return None, 0
-        
-        # Sample edge points
-        n_samples = min(1000, len(edge_points))
-        indices = np.random.choice(len(edge_points), n_samples, replace=False)
-        sampled_points = edge_points[indices]
-        
-        best_center = None
-        best_score = -np.inf
-        
-        # Try multiple random combinations
-        for _ in range(50):
-            # Select 3 random points
-            if len(sampled_points) < 3:
-                continue
+        try:
+            # Detect edges
+            edges = canny(self.enhanced, sigma=2.0, low_threshold=0.1, high_threshold=0.3)
+            
+            # Get edge points - ensure proper format
+            edge_coords = np.where(edges)
+            if len(edge_coords[0]) < 10:
+                return None, 0
                 
-            idx = np.random.choice(len(sampled_points), 3, replace=False)
-            p1, p2, p3 = sampled_points[idx]
+            edge_points = np.column_stack((edge_coords[1], edge_coords[0]))  # (x, y) format
             
-            # Calculate circumcenter
-            d = 2 * (p1[0]*(p2[1]-p3[1]) + p2[0]*(p3[1]-p1[1]) + p3[0]*(p1[1]-p2[1]))
-            if abs(d) < 1e-6:
-                continue
+            # Sample edge points
+            n_samples = min(1000, len(edge_points))
+            indices = np.random.choice(len(edge_points), n_samples, replace=False)
+            sampled_points = edge_points[indices]
+            
+            best_center = None
+            best_score = -np.inf
+            
+            # Try multiple random combinations
+            for _ in range(50):
+                # Select 3 random points
+                if len(sampled_points) < 3:
+                    continue
+                    
+                idx = np.random.choice(len(sampled_points), 3, replace=False)
+                p1, p2, p3 = sampled_points[idx]
                 
-            cx = ((p1[0]**2+p1[1]**2)*(p2[1]-p3[1]) + 
-                  (p2[0]**2+p2[1]**2)*(p3[1]-p1[1]) + 
-                  (p3[0]**2+p3[1]**2)*(p1[1]-p2[1])) / d
-            cy = ((p1[0]**2+p1[1]**2)*(p3[0]-p2[0]) + 
-                  (p2[0]**2+p2[1]**2)*(p1[0]-p3[0]) + 
-                  (p3[0]**2+p3[1]**2)*(p2[0]-p1[0])) / d
+                # Calculate circumcenter
+                d = 2 * (p1[0]*(p2[1]-p3[1]) + p2[0]*(p3[1]-p1[1]) + p3[0]*(p1[1]-p2[1]))
+                if abs(d) < 1e-6:
+                    continue
+                    
+                cx = ((p1[0]**2+p1[1]**2)*(p2[1]-p3[1]) + 
+                      (p2[0]**2+p2[1]**2)*(p3[1]-p1[1]) + 
+                      (p3[0]**2+p3[1]**2)*(p1[1]-p2[1])) / d
+                cy = ((p1[0]**2+p1[1]**2)*(p3[0]-p2[0]) + 
+                      (p2[0]**2+p2[1]**2)*(p1[0]-p3[0]) + 
+                      (p3[0]**2+p3[1]**2)*(p2[0]-p1[0])) / d
+                
+                # Check if center is within image bounds
+                h, w = self.gray.shape
+                if not (0 <= cx < w and 0 <= cy < h):
+                    continue
+                
+                # Score based on radial histogram
+                distances = np.linalg.norm(sampled_points - [cx, cy], axis=1)
+                hist, _ = np.histogram(distances, bins=50)
+                
+                # Good center should have strong peaks in histogram
+                score = np.max(hist) + 0.5 * np.sum(hist > np.mean(hist))
+                
+                if score > best_score:
+                    best_score = score
+                    best_center = (int(cx), int(cy))
             
-            # Check if center is within image bounds
-            h, w = self.gray.shape
-            if not (0 <= cx < w and 0 <= cy < h):
-                continue
-            
-            # Score based on radial histogram
-            distances = np.linalg.norm(sampled_points - [cx, cy], axis=1)
-            hist, _ = np.histogram(distances, bins=50)
-            
-            # Good center should have strong peaks in histogram
-            score = np.max(hist) + 0.5 * np.sum(hist > np.mean(hist))
-            
-            if score > best_score:
-                best_score = score
-                best_center = (int(cx), int(cy))
-        
-        if best_center is not None:
-            confidence = min(1.0, best_score / 100)
-            return best_center, confidence
+            if best_center is not None:
+                confidence = min(1.0, best_score / 100)
+                return best_center, confidence
+                
+        except Exception as e:
+            print(f"Edge-based center detection failed: {e}")
             
         return None, 0
     
@@ -287,9 +315,6 @@ class FiberOpticSegmenter:
             # Fallback estimation
             self.core_radius = int(max_radius * 0.2)
             self.cladding_radius = int(max_radius * 0.6)
-            
-        print(f"Core radius: {self.core_radius}")
-        print(f"Cladding radius: {self.cladding_radius}")
     
     def _create_radial_profiles(self, max_radius):
         """Create multiple radial profiles for robust boundary detection"""
@@ -443,109 +468,103 @@ class FiberOpticSegmenter:
                    (self.center[0] - 35, self.center[1] - self.cladding_radius - 10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         
-        # Create composite visualization
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        
-        axes[0, 0].imshow(cv2.cvtColor(self.original, cv2.COLOR_BGR2RGB))
-        axes[0, 0].set_title("Original Image")
-        axes[0, 0].axis('off')
-        
-        axes[0, 1].imshow(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
-        axes[0, 1].set_title("Detected Boundaries")
-        axes[0, 1].axis('off')
-        
-        axes[0, 2].imshow(self.enhanced, cmap='gray')
-        axes[0, 2].set_title("Enhanced Image")
-        axes[0, 2].axis('off')
-        
-        axes[1, 0].imshow(cv2.cvtColor(results['regions']['core'], cv2.COLOR_BGR2RGB))
-        axes[1, 0].set_title("Core Region")
-        axes[1, 0].axis('off')
-        
-        axes[1, 1].imshow(cv2.cvtColor(results['regions']['cladding'], cv2.COLOR_BGR2RGB))
-        axes[1, 1].set_title("Cladding Region")
-        axes[1, 1].axis('off')
-        
-        axes[1, 2].imshow(cv2.cvtColor(results['regions']['ferrule'], cv2.COLOR_BGR2RGB))
-        axes[1, 2].set_title("Ferrule Region")
-        axes[1, 2].axis('off')
-        
-        plt.tight_layout()
-        
         # Save results
         base_name = os.path.splitext(os.path.basename(self.image_path))[0]
         
-        plt.savefig(os.path.join(self.output_dir, f"{base_name}_visualization.png"), dpi=150)
-        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_annotated.png"), annotated)
-        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_core.png"), results['regions']['core'])
-        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_cladding.png"), results['regions']['cladding'])
-        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_ferrule.png"), results['regions']['ferrule'])
-        
-        plt.close()
+        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_gradient_annotated.png"), annotated)
+        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_gradient_core.png"), results['regions']['core'])
+        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_gradient_cladding.png"), results['regions']['cladding'])
+        cv2.imwrite(os.path.join(self.output_dir, f"{base_name}_gradient_ferrule.png"), results['regions']['ferrule'])
         
     def process(self):
-        """Main processing pipeline"""
-        print("\n=== Universal Fiber Optic Segmentation ===")
-        
-        # Step 1: Load and preprocess
-        print("\n1. Loading and preprocessing...")
-        self.load_and_preprocess()
-        
-        # Step 2: Find center using multiple methods
-        print("\n2. Finding fiber center using multiple methods...")
-        self.find_center_multi_method()
-        
-        # Step 3: Find radii using adaptive profiling
-        print("\n3. Finding core and cladding boundaries...")
-        self.find_radii_adaptive()
-        
-        # Step 4: Segment regions
-        print("\n4. Segmenting regions...")
-        results = self.segment_regions()
-        
-        # Step 5: Visualize and save results
-        print("\n5. Creating visualizations...")
-        self.visualize_results(results)
-        
-        print(f"\nResults saved to: {self.output_dir}")
-        
-        # Return results for further analysis if needed
-        return {
-            'center': self.center,
-            'core_radius': self.core_radius,
-            'cladding_radius': self.cladding_radius,
-            'masks': results['masks'],
-            'regions': results['regions']
+        """Main processing pipeline - returns standardized result"""
+        try:
+            # Step 1: Load and preprocess
+            self.load_and_preprocess()
+            
+            # Step 2: Find center using multiple methods
+            self.find_center_multi_method()
+            
+            # Step 3: Find radii using adaptive profiling
+            self.find_radii_adaptive()
+            
+            # Step 4: Segment regions
+            results = self.segment_regions()
+            
+            # Step 5: Visualize and save results
+            self.visualize_results(results)
+            
+            # Update result dictionary
+            self.result['success'] = True
+            self.result['center'] = self.center
+            self.result['core_radius'] = self.core_radius
+            self.result['cladding_radius'] = self.cladding_radius
+            self.result['confidence'] = 0.85  # High confidence for multi-method approach
+            
+            # Save result data
+            base_name = os.path.splitext(os.path.basename(self.image_path))[0]
+            with open(os.path.join(self.output_dir, f'{base_name}_gradient_result.json'), 'w') as f:
+                json.dump(self.result, f, indent=4)
+            
+            # Return results for unified system
+            return {
+                'center': self.center,
+                'core_radius': self.core_radius,
+                'cladding_radius': self.cladding_radius,
+                'masks': results['masks'],
+                'regions': results['regions']
+            }
+            
+        except Exception as e:
+            self.result['error'] = str(e)
+            # Save error result
+            base_name = os.path.splitext(os.path.basename(self.image_path))[0]
+            with open(os.path.join(self.output_dir, f'{base_name}_gradient_result.json'), 'w') as f:
+                json.dump(self.result, f, indent=4)
+            return None
+
+
+def segment_with_gradient(image_path, output_dir='output_gradient'):
+    """Wrapper function for unified system compatibility"""
+    try:
+        segmenter = FiberOpticSegmenter(image_path, output_dir)
+        _ = segmenter.process()
+        return segmenter.result
+    except Exception as e:
+        # Return error result
+        result = {
+            'method': 'gradient_approach',
+            'image_path': image_path,
+            'success': False,
+            'center': None,
+            'core_radius': None,
+            'cladding_radius': None,
+            'confidence': 0.0,
+            'error': str(e)
         }
+        # Save error result
+        try:
+            base_name = os.path.splitext(os.path.basename(image_path))[0]
+            with open(os.path.join(output_dir, f'{base_name}_gradient_result.json'), 'w') as f:
+                json.dump(result, f, indent=4)
+        except:
+            pass
+        return result
 
 
 def main():
-    """Main function with user interaction"""
-    print("=== Universal Fiber Optic Endface Segmentation Tool ===")
-    print("\nThis tool segments fiber optic endface images without relying on Hough circles.")
-    print("It uses multiple robust methods to ensure accurate segmentation.\n")
+    """Main function for standalone testing"""
+    import sys
+    if len(sys.argv) > 1:
+        image_path = sys.argv[1]
+    else:
+        image_path = input("Enter image path: ").strip().strip('"').strip("'")
     
-    # Get image path from user
-    image_path = input("Enter the full path to your fiber optic image: ").strip().strip('"').strip("'")
-    
-    # Get output directory (optional)
-    output_dir = input("Enter output directory (press Enter for 'output_universal'): ").strip()
-    if not output_dir:
-        output_dir = 'output_universal'
-    
-    try:
-        # Create segmenter and process
-        segmenter = FiberOpticSegmenter(image_path, output_dir)
-        results = segmenter.process()
-        
-        print("\n=== Segmentation Complete ===")
-        print(f"Center: {results['center']}")
-        print(f"Core radius: {results['core_radius']} pixels")
-        print(f"Cladding radius: {results['cladding_radius']} pixels")
-        
-    except Exception as e:
-        print(f"\nError: {e}")
-        print("Please check your image path and try again.")
+    result = segment_with_gradient(image_path)
+    if result['success']:
+        print(f"Success! Center: {result['center']}, Core: {result['core_radius']}, Cladding: {result['cladding_radius']}")
+    else:
+        print(f"Failed: {result.get('error', 'Unknown error')}")
 
 
 if __name__ == "__main__":

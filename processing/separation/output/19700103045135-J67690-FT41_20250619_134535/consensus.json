@@ -1,0 +1,69 @@
+{
+    "consensus_strength": {
+        "core": 0.0,
+        "cladding": 0.0,
+        "ferrule": 0.0
+    },
+    "contributing_methods": [
+        "guess_approach",
+        "segmentation",
+        "computational_separation"
+    ],
+    "num_valid_results": 3,
+    "method_weights": {
+        "guess_approach": 0.75,
+        "segmentation": 0.9,
+        "computational_separation": 0.8
+    },
+    "all_results": [
+        {
+            "method_name": "guess_approach",
+            "center": [
+                585.0,
+                431.0
+            ],
+            "core_radius": 57.0,
+            "cladding_radius": 139.0,
+            "confidence": 0.75,
+            "execution_time": 2.9275197982788086,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "segmentation",
+            "center": [
+                649.0,
+                472.0
+            ],
+            "core_radius": 14.0,
+            "cladding_radius": 25.0,
+            "confidence": 0.9,
+            "execution_time": 0.9261689186096191,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "computational_separation",
+            "center": [
+                583.0,
+                424.0
+            ],
+            "core_radius": 59.0,
+            "cladding_radius": 143.0,
+            "confidence": 0.8,
+            "execution_time": 1.0673637390136719,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "gradient_approach",
+            "center": null,
+            "core_radius": null,
+            "cladding_radius": null,
+            "confidence": 0.0,
+            "execution_time": 1.06172776222229,
+            "error": "boolean index did not match indexed array along axis 0; size of axis is 1 but size of corresponding boolean axis is 864",
+            "has_masks": false
+        }
+    ]
+}
