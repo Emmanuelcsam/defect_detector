@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import argparse
 import os
 
 def segment_fiber_optic_image(image_path, output_dir='output'):
@@ -127,12 +126,11 @@ def segment_fiber_optic_image(image_path, output_dir='output'):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(
-        description="""Fiber Optic Endface Segmentation Script.
-        This script analyzes an image to segment it into core, cladding, and ferrule regions."""
-    )
-    parser.add_argument('-i', '--image', type=str, required=True, help='Path to the input fiber optic image file.')
-    parser.add_argument('-o', '--output', type=str, default='output_segmented', help='Directory to save the segmented output files.')
-    args = parser.parse_args()
+    # Interactively prompt the user for the input image path
+    image_path = input("Please enter the path to the input fiber optic image file: ")
 
-    segment_fiber_optic_image(args.image, args.output)
+    # Interactively prompt the user for the output directory, providing a default value
+    output_dir = input("Enter the directory to save the segmented output files (press Enter for 'output_segmented'): ") or 'output_segmented'
+
+    # Call the main function with the user-provided paths
+    segment_fiber_optic_image(image_path, output_dir)

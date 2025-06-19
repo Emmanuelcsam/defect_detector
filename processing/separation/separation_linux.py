@@ -1,6 +1,16 @@
 import cv2
 import numpy as np
 import os
+
+# --- MODIFICATION FOR LINUX/HEADLESS ENVIRONMENTS ---
+# Set the backend for Matplotlib to a non-interactive one ('Agg')
+# This must be done BEFORE importing pyplot.
+# This prevents it from trying to initialize a Qt or other GUI window,
+# which resolves the "Qt platform plugin" error.
+import matplotlib
+matplotlib.use('Agg')
+# --- END MODIFICATION ---
+
 import matplotlib.pyplot as plt
 from skimage.feature import local_binary_pattern
 from scipy.signal import find_peaks
@@ -57,13 +67,12 @@ def universal_fiber_segmentation(image_path, output_dir='output_universal'):
     print(f"  -> Geometric Guess (Hough): ({hough_center[0]}, {hough_center[1]})")
 
     # Hypothesis B: Photometric Center (Centroid of Brightest Pixels)
-    # The core is typically the brightest region.
-    brightness_threshold = np.percentile(gray_image, 95) # Top 5% brightest pixels
+    brightness_threshold = np.percentile(gray_image, 95)
     _, core_mask = cv2.threshold(blurred_image, brightness_threshold, 255, cv2.THRESH_BINARY)
     M_bright = cv2.moments(core_mask)
     if M_bright["m00"] == 0:
         print("Warning: Could not find brightness centroid. Relying on other guesses.")
-        brightness_center = hough_center # Fallback
+        brightness_center = hough_center
     else:
         cx_bright = int(M_bright["m10"] / M_bright["m00"])
         cy_bright = int(M_bright["m01"] / M_bright["m00"])
@@ -71,14 +80,13 @@ def universal_fiber_segmentation(image_path, output_dir='output_universal'):
         print(f"  -> Photometric Guess (Core): ({brightness_center[0]}, {brightness_center[1]})")
 
     # Hypothesis C: Textural Center (Centroid of Smoothest Texture)
-    # The core and cladding glass are texturally uniform (low LBP values).
     lbp_layer = local_binary_pattern(gray_image, P=8, R=1, method='uniform')
-    texture_threshold = np.percentile(lbp_layer, 25) # 25% most uniform texture
+    texture_threshold = np.percentile(lbp_layer, 25)
     texture_mask = np.where(lbp_layer <= texture_threshold, 255, 0).astype(np.uint8)
     M_texture = cv2.moments(texture_mask)
     if M_texture["m00"] == 0:
         print("Warning: Could not find texture centroid. Relying on other guesses.")
-        texture_center = hough_center # Fallback
+        texture_center = hough_center
     else:
         cx_texture = int(M_texture["m10"] / M_texture["m00"])
         cy_texture = int(M_texture["m01"] / M_texture["m00"])
@@ -100,7 +108,6 @@ def universal_fiber_segmentation(image_path, output_dir='output_universal'):
 
     max_radius = int(min(center_x, center_y, width - center_x, height - center_y))
     
-    # Efficiently calculate radial profiles using NumPy array operations
     y_coords, x_coords = np.indices((height, width))
     radii_map = np.sqrt((x_coords - center_x)**2 + (y_coords - center_y)**2).astype(int)
 
@@ -119,14 +126,12 @@ def universal_fiber_segmentation(image_path, output_dir='output_universal'):
     # --- 4. Boundary Detection from Gradient Profile ---
     print("\n--- Step 3: Boundary Detection ---")
     
-    # Use SciPy's robust peak finder
     peaks, properties = find_peaks(radial_change, prominence=np.mean(radial_change), distance=10)
     
     if len(peaks) < 2:
         print("Error: Could not reliably detect two distinct boundaries. Check image quality.")
         return
 
-    # Sort peaks by their magnitude (prominence) and take the top two.
     top_two_peak_indices = np.argsort(properties['prominences'])[-2:]
     radii = sorted(peaks[top_two_peak_indices])
     
@@ -141,7 +146,6 @@ def universal_fiber_segmentation(image_path, output_dir='output_universal'):
     fig, axs = plt.subplots(2, 1, figsize=(12, 10), sharex=True)
     fig.suptitle('Universal Radial Analysis (from Fused Center)', fontsize=16)
 
-    # Plot 1: Intensity
     axs[0].plot(radial_intensity, color='blue', label='Avg. Intensity')
     axs[0].set_title('Average Pixel Intensity vs. Radius')
     axs[0].set_ylabel('Intensity')
@@ -150,7 +154,6 @@ def universal_fiber_segmentation(image_path, output_dir='output_universal'):
     axs[0].axvline(x=cladding_radius, color='r', linestyle='--', label=f'Cladding Boundary ({cladding_radius}px)')
     axs[0].legend()
 
-    # Plot 2: Gradient
     axs[1].plot(radial_change, color='orange', label='Avg. Gradient')
     axs[1].set_title('Average Change Magnitude (Gradient) vs. Radius')
     axs[1].set_xlabel('Radius from Center (pixels)')
@@ -180,8 +183,7 @@ def universal_fiber_segmentation(image_path, output_dir='output_universal'):
     ferrule_region = cv2.bitwise_and(original_image, original_image, mask=ferrule_mask)
 
     diagnostic_image = original_image.copy()
-    # Mark the fused center and boundaries
-    cv2.circle(diagnostic_image, (center_x, center_y), 3, (0, 255, 255), -1) # Center point
+    cv2.circle(diagnostic_image, (center_x, center_y), 3, (0, 255, 255), -1)
     cv2.circle(diagnostic_image, (center_x, center_y), core_radius, (0, 255, 0), 2, cv2.LINE_AA)
     cv2.circle(diagnostic_image, (center_x, center_y), cladding_radius, (0, 0, 255), 2, cv2.LINE_AA)
     
