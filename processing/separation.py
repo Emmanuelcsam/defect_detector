@@ -105,10 +105,10 @@ class UnifiedSegmentationSystem:
         """Dynamically load all segmentation methods"""
         method_files = [
             'guess_approach.py',
-            'hough_seperation.py', 
+            'hough_separation.py', 
             'segmentation.py',
-            'threshold_seperation.py',
-            'adaptive_intensity_approach.py',
+            'threshold_separation.py',
+            'adaptive_intensity.py',
             'computational_separation.py',
             'gradient_approach.py',
             'bright_core_extractor.py' # ADDED FOR INTEGRATION

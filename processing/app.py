@@ -114,6 +114,7 @@ class PipelineOrchestrator:
         separation_cfg = self.config['separation_settings']
         zones_methods_dir = self.config['paths']['zones_methods_dir']
         separated_dir = run_dir / separation_cfg['output_folder_name']
+        separated_dir.mkdir(exist_ok=True) # <-- ADD THIS LINE
         
         all_separated_regions = []
 
@@ -226,9 +227,14 @@ def main():
     print("="*80)
     
     # Get config path from user
-    config_path_str = input("Enter path to config.json (or press Enter for 'config.json' in the current directory): ").strip()
+    config_path_str = input("Enter path to config.json (or press Enter for default 'config.json'): ").strip()
     if not config_path_str:
         config_path_str = "config.json"
+
+    # Remove leading/trailing quotes that might be pasted from file explorers
+    if config_path_str.startswith('"') and config_path_str.endswith('"'):
+        config_path_str = config_path_str[1:-1]
+
     
     config_path = Path(config_path_str)
     if not config_path.exists():
