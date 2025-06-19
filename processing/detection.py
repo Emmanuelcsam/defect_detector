@@ -1604,7 +1604,7 @@ class OmniFiberAnalyzer:
         
         self.logger.info("OmniFiberAnalyzer initialized successfully")
     
-    def analyze_end_face(self, image_path: str) -> AnalysisReport:
+    def analyze_end_face(self, image_path: str, output_dir: str = None) -> AnalysisReport:
         """Main analysis pipeline for fiber optic end-face images."""
         self.logger.info(f"Starting analysis of: {image_path}")
         start_time = time.time()
@@ -1646,11 +1646,12 @@ class OmniFiberAnalyzer:
             duration = time.time() - start_time
             final_report = self._generate_final_report(
                 image_path, original_image, global_results, 
-                analyzed_defects, fiber_info, zone_masks, duration
+                analyzed_defects, fiber_info, zone_masks, duration, output_dir
             )
-            
+
             # Stage 10: Visualization
-            self._visualize_master_results(original_image, final_report)
+            if output_dir: # Only generate visualization if output_dir is provided
+                self._visualize_master_results(original_image, final_report, output_dir)
             
             self.logger.info(f"Analysis completed in {duration:.2f} seconds")
             return final_report
@@ -3447,11 +3448,12 @@ class OmniFiberAnalyzer:
         return min(max(confidence, 0.1), 1.0)
     
     def _generate_final_report(self, image_path: str, original_image: np.ndarray,
-                              global_results: Optional[Dict[str, Any]],
-                              analyzed_defects: List[Defect],
-                              fiber_info: Dict[str, Any],
-                              zone_masks: Dict[str, np.ndarray],
-                              processing_time: float) -> AnalysisReport:
+                            global_results: Optional[Dict[str, Any]],
+                            analyzed_defects: List[Defect],
+                            fiber_info: Dict[str, Any],
+                            zone_masks: Dict[str, np.ndarray],
+                            processing_time: float,
+                            output_dir: str = None) -> AnalysisReport:
         """Generate comprehensive analysis report."""
         self.logger.info("Generating final report...")
         
@@ -3575,13 +3577,15 @@ class OmniFiberAnalyzer:
         )
         
         # Save report if requested
-        if self.config.generate_json_report:
-            report_path = os.path.splitext(image_path)[0] + "_report.json"
-            self._save_json_report(report, report_path)
-        
-        if self.config.generate_text_report:
-            report_path = os.path.splitext(image_path)[0] + "_report.txt"
-            self._save_text_report(report, report_path)
+        if output_dir:
+            output_path_base = os.path.join(output_dir, os.path.splitext(os.path.basename(image_path))[0])
+            if self.config.generate_json_report:
+                report_path = output_path_base + "_report.json"
+                self._save_json_report(report, report_path)
+
+            if self.config.generate_text_report:
+                report_path = output_path_base + "_report.txt"
+                self._save_text_report(report, report_path)
         
         return report
     
@@ -3701,7 +3705,7 @@ class OmniFiberAnalyzer:
         except Exception as e:
             self.logger.error(f"Failed to save text report: {str(e)}")
     
-    def _visualize_master_results(self, original_image: np.ndarray, report: AnalysisReport):
+    def _visualize_master_results(self, original_image: np.ndarray, report: AnalysisReport, output_dir: str):
         """Create comprehensive visualization of results."""
         self.logger.info("Creating visualization...")
         
@@ -3916,7 +3920,7 @@ class OmniFiberAnalyzer:
                     fontsize=16, fontweight='bold')
         
         # Save figure
-        output_path = os.path.splitext(report.image_path)[0] + "_visualization.png"
+        output_path = os.path.join(output_dir, os.path.splitext(os.path.basename(report.image_path))[0] + "_visualization.png")
         plt.savefig(output_path, dpi=self.config.visualization_dpi, bbox_inches='tight')
         plt.close()
         

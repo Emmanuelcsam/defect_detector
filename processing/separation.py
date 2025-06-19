@@ -425,12 +425,10 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
             'all_results': [r.to_dict() for r in results]
         }
     
-    def save_results(self, image_path: Path, consensus: Dict[str, Any], image: np.ndarray):
-        """Save consensus results WITHOUT binary filtering"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base_name = image_path.stem
-        result_dir = self.output_dir / f"{base_name}_{timestamp}"
-        result_dir.mkdir(exist_ok=True)
+    def save_results(self, image_path: Path, consensus: Dict[str, Any], image: np.ndarray, output_dir: str) -> List[str]:
+        """Save consensus results and return paths of saved regions."""
+        result_dir = Path(output_dir) # Use the passed output directory
+        result_dir.mkdir(exist_ok=True) # Ensure it exists
         
         # Extract masks
         core_mask = consensus['masks']['core']
@@ -464,6 +462,12 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         cv2.imwrite(str(result_dir / "region_ferrule.png"), region_ferrule)
         
         print(f"\n✓ Results saved to: {result_dir}")
+        saved_region_paths = [
+        str(result_dir / "region_core.png"),
+        str(result_dir / "region_cladding.png"),
+        str(result_dir / "region_ferrule.png")
+        ]
+        return saved_region_paths
     
     def create_voting_visualization(self, result_dir: Path, core_mask: np.ndarray, 
                                    cladding_mask: np.ndarray, ferrule_mask: np.ndarray, 
@@ -540,7 +544,7 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         for method in self.methods:
             self.methods[method]['score'] = self.dataset_stats['method_scores'].get(method, 1.0)
     
-    def process_image(self, image_path: Path) -> Dict[str, Any]:
+    def process_image(self, image_path: Path, output_dir: str) -> Dict[str, Any]:
         """Process a single image through all methods"""
         print(f"\nProcessing: {image_path.name}")
         print("=" * 60)
@@ -579,7 +583,8 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
             self.update_learning(consensus, image_shape)
             
             # Save results
-            self.save_results(image_path, consensus, img)
+            saved_regions = self.save_results(image_path, consensus, img, output_dir)
+            consensus['saved_regions'] = saved_regions
         else:
             print("\n✗ No consensus could be reached")
             
@@ -763,7 +768,7 @@ def main():
     # Allow custom methods directory via command line argument
     import sys
     methods_dir = sys.argv[1] if len(sys.argv) > 1 else "zones_methods"
-    
+
     system = UnifiedSegmentationSystem(methods_dir)
     system.run()
 
