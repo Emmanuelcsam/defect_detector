@@ -107,15 +107,19 @@ class FiberOpticSegmenter:
         threshold = np.percentile(self.enhanced, 85)
         bright_mask = self.enhanced > threshold
         
-        # Remove small objects - ensure we're working with boolean array
+        # Remove small objects - FIXED for boolean indexing
         try:
-            from skimage import __version__
-            # For newer versions of scikit-image
+            # Convert to proper boolean type
             bright_mask = bright_mask.astype(bool)
-            bright_mask = remove_small_objects(bright_mask, min_size=100)
-        except:
-            # Fallback method
-            pass
+            # Check if array is 2D as expected by remove_small_objects
+            if bright_mask.ndim == 2:
+                bright_mask = remove_small_objects(bright_mask, min_size=100)
+            else:
+                # If not 2D, skip remove_small_objects
+                pass
+        except Exception as e:
+            # If remove_small_objects fails, continue without it
+            print(f"Warning: Could not remove small objects: {e}")
         
         if np.sum(bright_mask) == 0:
             return None, 0
@@ -125,7 +129,8 @@ class FiberOpticSegmenter:
         if len(y_coords) == 0 or len(x_coords) == 0:
             return None, 0
             
-        weights = self.enhanced[bright_mask].flatten()
+        # Get weights from the bright pixels only
+        weights = self.enhanced[y_coords, x_coords]
         
         cx = np.average(x_coords, weights=weights)
         cy = np.average(y_coords, weights=weights)

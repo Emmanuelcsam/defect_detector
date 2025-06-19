@@ -301,87 +301,95 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         return result
     
     def pixel_voting_consensus(self, results: List[SegmentationResult], image_shape: Tuple[int, int]) -> Dict[str, Any]:
-        """Find consensus using pixel-by-pixel voting"""
+        """Find consensus using TRUE pixel-by-pixel MAJORITY voting"""
         valid_results = [r for r in results if r.error is None and r.masks is not None]
         
         if not valid_results:
             return None
             
-        print(f"\nPerforming pixel-by-pixel voting with {len(valid_results)} valid results...")
+        print(f"\nPerforming pixel-by-pixel MAJORITY voting with {len(valid_results)} valid results...")
         
         h, w = image_shape
         
-        # Initialize vote accumulation arrays
-        core_votes = np.zeros((h, w), dtype=np.int32)
-        cladding_votes = np.zeros((h, w), dtype=np.int32)
-        ferrule_votes = np.zeros((h, w), dtype=np.int32)
+        # For each pixel, count votes for each region
+        # Each method gets ONE vote per pixel
+        pixel_votes = np.zeros((h, w, 3), dtype=np.int32)  # 3 regions: core, cladding, ferrule
         
-        # Accumulate votes from each method
-        method_weights = {}
+        # Collect votes from each method
         for r in valid_results:
-            # Weight votes by method confidence and score
-            weight = r.confidence * self.methods[r.method_name]['score']
-            method_weights[r.method_name] = weight
+            # For each pixel, the method votes for ONE region
+            core_votes = r.masks['core'] > 0
+            cladding_votes = r.masks['cladding'] > 0
+            ferrule_votes = r.masks['ferrule'] > 0
             
-            # Add votes (weighted)
-            core_votes += (r.masks['core'] * weight).astype(np.int32)
-            cladding_votes += (r.masks['cladding'] * weight).astype(np.int32)
-            ferrule_votes += (r.masks['ferrule'] * weight).astype(np.int32)
+            # Add votes (each method gets exactly one vote per pixel)
+            pixel_votes[:, :, 0] += core_votes.astype(np.int32)
+            pixel_votes[:, :, 1] += cladding_votes.astype(np.int32)
+            pixel_votes[:, :, 2] += ferrule_votes.astype(np.int32)
         
-        # For each pixel, assign it to the region with the most votes
-        total_votes = core_votes + cladding_votes + ferrule_votes
-        
-        # Avoid division by zero
-        total_votes[total_votes == 0] = 1
-        
-        # Create final masks based on which region got the most votes for each pixel
+        # For each pixel, assign it to the region with the MOST votes (majority rules)
+        # Even if only 2 out of 7 methods agree, that's still the majority for that pixel
         final_core_mask = np.zeros((h, w), dtype=np.uint8)
         final_cladding_mask = np.zeros((h, w), dtype=np.uint8)
         final_ferrule_mask = np.zeros((h, w), dtype=np.uint8)
         
-        # Assign each pixel to the region with highest vote
-        max_votes = np.maximum(core_votes, np.maximum(cladding_votes, ferrule_votes))
+        # Find which region has the most votes for each pixel
+        winning_region = np.argmax(pixel_votes, axis=2)
         
-        final_core_mask[core_votes == max_votes] = 1
-        final_cladding_mask[cladding_votes == max_votes] = 1
-        final_ferrule_mask[ferrule_votes == max_votes] = 1
+        # Assign pixels based on majority vote
+        final_core_mask[winning_region == 0] = 1
+        final_cladding_mask[winning_region == 1] = 1
+        final_ferrule_mask[winning_region == 2] = 1
         
-        # Handle ties by preferring core > cladding > ferrule
-        tie_mask = ((core_votes == cladding_votes) | 
-                   (core_votes == ferrule_votes) | 
-                   (cladding_votes == ferrule_votes))
+        # Handle ties (if votes are equal)
+        # Check for ties between regions
+        max_votes = np.max(pixel_votes, axis=2)
         
-        if np.any(tie_mask):
-            # In case of ties, use proximity to center as tiebreaker
-            # Find approximate center from core mask
-            core_points = np.where(final_core_mask > 0)
-            if len(core_points[0]) > 0:
-                center_y = np.mean(core_points[0])
-                center_x = np.mean(core_points[1])
+        # Count how many regions have the max vote count for each pixel
+        tie_count = np.sum(pixel_votes == max_votes[:, :, np.newaxis], axis=2)
+        tie_pixels = tie_count > 1
+        
+        if np.any(tie_pixels):
+            print(f"  Found {np.sum(tie_pixels)} pixels with tied votes")
+            # For ties, prefer: core > cladding > ferrule
+            tie_coords = np.where(tie_pixels)
+            for i in range(len(tie_coords[0])):
+                y, x = tie_coords[0][i], tie_coords[1][i]
+                votes = pixel_votes[y, x]
+                max_vote = np.max(votes)
                 
-                y_grid, x_grid = np.ogrid[:h, :w]
-                dist_from_center = np.sqrt((x_grid - center_x)**2 + (y_grid - center_y)**2)
+                # Clear current assignments
+                final_core_mask[y, x] = 0
+                final_cladding_mask[y, x] = 0
+                final_ferrule_mask[y, x] = 0
                 
-                # Use distance to resolve ties
-                tie_pixels = np.where(tie_mask)
-                for i in range(len(tie_pixels[0])):
-                    y, x = tie_pixels[0][i], tie_pixels[1][i]
-                    if core_votes[y, x] == max_votes[y, x]:
-                        final_core_mask[y, x] = 1
-                        final_cladding_mask[y, x] = 0
-                        final_ferrule_mask[y, x] = 0
-                    elif cladding_votes[y, x] == max_votes[y, x]:
-                        final_core_mask[y, x] = 0
-                        final_cladding_mask[y, x] = 1
-                        final_ferrule_mask[y, x] = 0
+                # Assign based on preference
+                if votes[0] == max_vote:  # Core
+                    final_core_mask[y, x] = 1
+                elif votes[1] == max_vote:  # Cladding
+                    final_cladding_mask[y, x] = 1
+                else:  # Ferrule
+                    final_ferrule_mask[y, x] = 1
         
         # Calculate consensus metrics
         total_pixels = h * w
         consensus_strength = {
-            'core': np.sum(core_votes) / (total_pixels * len(valid_results)),
-            'cladding': np.sum(cladding_votes) / (total_pixels * len(valid_results)),
-            'ferrule': np.sum(ferrule_votes) / (total_pixels * len(valid_results))
+            'core': np.sum(pixel_votes[:, :, 0]) / (total_pixels * len(valid_results)),
+            'cladding': np.sum(pixel_votes[:, :, 1]) / (total_pixels * len(valid_results)),
+            'ferrule': np.sum(pixel_votes[:, :, 2]) / (total_pixels * len(valid_results))
         }
+        
+        # Calculate agreement statistics
+        agreement_stats = {
+            'unanimous_pixels': np.sum(max_votes == len(valid_results)),
+            'majority_pixels': np.sum(max_votes > len(valid_results) / 2),
+            'minority_pixels': np.sum(max_votes <= len(valid_results) / 2),
+            'min_agreement': 2  # Even 2 methods agreeing is valid
+        }
+        
+        print(f"  Unanimous agreement: {agreement_stats['unanimous_pixels']} pixels")
+        print(f"  Majority agreement: {agreement_stats['majority_pixels']} pixels")
+        print(f"  Minority agreement: {agreement_stats['minority_pixels']} pixels")
         
         # Find which methods contributed most to the consensus
         contributing_methods = [r.method_name for r in valid_results]
@@ -395,53 +403,13 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
             'consensus_strength': consensus_strength,
             'contributing_methods': contributing_methods,
             'num_valid_results': len(valid_results),
-            'method_weights': method_weights,
+            'agreement_stats': agreement_stats,
+            'vote_counts': pixel_votes,  # Keep vote counts for visualization
             'all_results': [r.to_dict() for r in results]
         }
     
-    def apply_binary_filter(self, image, mask, threshold_percentile=75, keep_bright=True):
-        """Apply binary filter to clean up a region"""
-        # Extract the region
-        region = cv2.bitwise_and(image, image, mask=(mask * 255).astype(np.uint8))
-        
-        # Convert to grayscale if needed
-        if len(region.shape) == 3:
-            gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        else:
-            gray = region.copy()
-        
-        # Only process non-zero pixels
-        non_zero_pixels = gray[mask > 0]
-        if len(non_zero_pixels) == 0:
-            return region
-        
-        # Apply threshold based on percentile of the region
-        threshold = np.percentile(non_zero_pixels, threshold_percentile)
-        
-        # Create binary mask
-        if keep_bright:
-            # Keep pixels brighter than threshold
-            binary_mask = (gray >= threshold) & (mask > 0)
-        else:
-            # Keep pixels darker than threshold
-            binary_mask = (gray < threshold) & (mask > 0)
-        
-        # Apply morphological operation to clean up
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        binary_mask = cv2.morphologyEx(binary_mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-        
-        # Apply the binary mask
-        filtered_region = np.zeros_like(image)
-        if len(image.shape) == 3:
-            for i in range(3):
-                filtered_region[:,:,i] = np.where(binary_mask, image[:,:,i], 0)
-        else:
-            filtered_region = np.where(binary_mask, image, 0)
-        
-        return filtered_region
-    
     def save_results(self, image_path: Path, consensus: Dict[str, Any], image: np.ndarray):
-        """Save consensus results with binary filtering applied only to final output"""
+        """Save consensus results WITHOUT binary filtering"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = image_path.stem
         result_dir = self.output_dir / f"{base_name}_{timestamp}"
@@ -455,6 +423,7 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         # Save consensus data (without the large mask arrays)
         consensus_save = consensus.copy()
         consensus_save.pop('masks', None)
+        consensus_save.pop('vote_counts', None)
         with open(result_dir / "consensus.json", 'w') as f:
             json.dump(consensus_save, f, indent=4, cls=NumpyEncoder)
         
@@ -464,40 +433,24 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         np.save(result_dir / "ferrule_mask.npy", ferrule_mask)
         
         # Create visualization of voting results
-        self.create_voting_visualization(result_dir, core_mask, cladding_mask, ferrule_mask, image)
+        self.create_voting_visualization(result_dir, core_mask, cladding_mask, ferrule_mask, 
+                                       image, consensus.get('vote_counts'))
         
-        # Extract regions using masks
+        # Extract regions using masks (NO BINARY FILTERING)
         region_core = cv2.bitwise_and(image, image, mask=(core_mask * 255).astype(np.uint8))
         region_cladding = cv2.bitwise_and(image, image, mask=(cladding_mask * 255).astype(np.uint8))
         region_ferrule = cv2.bitwise_and(image, image, mask=(ferrule_mask * 255).astype(np.uint8))
         
-        # Save original segmented regions
-        cv2.imwrite(str(result_dir / "region_core_original.png"), region_core)
-        cv2.imwrite(str(result_dir / "region_cladding_original.png"), region_cladding)
-        cv2.imwrite(str(result_dir / "region_ferrule_original.png"), region_ferrule)
-        
-        # Apply binary filtering to final results
-        print("  Applying binary filters to final results...")
-        
-        # Core: Keep only bright pixels
-        refined_core = self.apply_binary_filter(image, core_mask, threshold_percentile=75, keep_bright=True)
-        
-        # Cladding: Remove bright pixels (keep dark pixels)
-        refined_cladding = self.apply_binary_filter(image, cladding_mask, threshold_percentile=85, keep_bright=False)
-        
-        # Save refined regions
-        cv2.imwrite(str(result_dir / "region_core_refined.png"), refined_core)
-        cv2.imwrite(str(result_dir / "region_cladding_refined.png"), refined_cladding)
-        
-        # Create comparison visualization
-        self.create_refinement_visualization(result_dir, region_core, refined_core, 
-                                           region_cladding, refined_cladding)
+        # Save segmented regions
+        cv2.imwrite(str(result_dir / "region_core.png"), region_core)
+        cv2.imwrite(str(result_dir / "region_cladding.png"), region_cladding)
+        cv2.imwrite(str(result_dir / "region_ferrule.png"), region_ferrule)
         
         print(f"\n✓ Results saved to: {result_dir}")
     
     def create_voting_visualization(self, result_dir: Path, core_mask: np.ndarray, 
                                    cladding_mask: np.ndarray, ferrule_mask: np.ndarray, 
-                                   original_image: np.ndarray):
+                                   original_image: np.ndarray, vote_counts: Optional[np.ndarray] = None):
         """Create visualization of the voting results"""
         # Create color-coded mask visualization
         h, w = core_mask.shape
@@ -519,48 +472,36 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         cv2.imwrite(str(result_dir / "voting_mask_visualization.png"), mask_viz)
         cv2.imwrite(str(result_dir / "voting_overlay.png"), overlay)
         
-        print("  ✓ Created voting visualization")
-    
-    def create_refinement_visualization(self, result_dir: Path, core_orig: np.ndarray, core_refined: np.ndarray, 
-                                      clad_orig: np.ndarray, clad_refined: np.ndarray):
-        """Create visualization comparing original and refined regions"""
-        if not HAS_MATPLOTLIB:
-            print("  ! Skipping refinement visualization (matplotlib not available)")
-            return
+        # If we have vote counts, create a vote strength visualization
+        if vote_counts is not None and HAS_MATPLOTLIB:
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+            fig.suptitle('Pixel-by-Pixel Voting Results', fontsize=16)
             
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        fig.suptitle('Binary Filter Refinement Results (Applied to Final Output)', fontsize=16)
+            # Show vote counts for each region
+            im0 = axes[0, 0].imshow(vote_counts[:, :, 0], cmap='Reds', vmin=0, vmax=vote_counts.max())
+            axes[0, 0].set_title('Core Votes')
+            plt.colorbar(im0, ax=axes[0, 0])
+            
+            im1 = axes[0, 1].imshow(vote_counts[:, :, 1], cmap='Greens', vmin=0, vmax=vote_counts.max())
+            axes[0, 1].set_title('Cladding Votes')
+            plt.colorbar(im1, ax=axes[0, 1])
+            
+            im2 = axes[1, 0].imshow(vote_counts[:, :, 2], cmap='Blues', vmin=0, vmax=vote_counts.max())
+            axes[1, 0].set_title('Ferrule Votes')
+            plt.colorbar(im2, ax=axes[1, 0])
+            
+            # Show final result
+            axes[1, 1].imshow(mask_viz)
+            axes[1, 1].set_title('Final Segmentation (Majority Vote)')
+            
+            for ax in axes.flat:
+                ax.axis('off')
+                
+            plt.tight_layout()
+            plt.savefig(str(result_dir / "voting_analysis.png"), dpi=150)
+            plt.close()
         
-        # Convert to RGB for display if needed
-        def to_rgb(img):
-            if len(img.shape) == 2:
-                return cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-            else:
-                return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Core comparison
-        axes[0, 0].imshow(to_rgb(core_orig))
-        axes[0, 0].set_title('Core Region - Original')
-        axes[0, 0].axis('off')
-        
-        axes[0, 1].imshow(to_rgb(core_refined))
-        axes[0, 1].set_title('Core Region - Refined (Bright Pixels Only)')
-        axes[0, 1].axis('off')
-        
-        # Cladding comparison
-        axes[1, 0].imshow(to_rgb(clad_orig))
-        axes[1, 0].set_title('Cladding Region - Original')
-        axes[1, 0].axis('off')
-        
-        axes[1, 1].imshow(to_rgb(clad_refined))
-        axes[1, 1].set_title('Cladding Region - Refined (Dark Pixels Only)')
-        axes[1, 1].axis('off')
-        
-        plt.tight_layout()
-        plt.savefig(str(result_dir / "refinement_comparison.png"), dpi=150)
-        plt.close()
-        
-        print("  ✓ Created refinement comparison visualization")
+        print("  ✓ Created voting visualization")
     
     def update_learning(self, consensus: Dict[str, Any], image_shape: Tuple[int, int]):
         """Update learning parameters based on consensus results"""
@@ -759,7 +700,7 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         """Main execution flow"""
         print("\n" + "="*80)
         print("UNIFIED FIBER OPTIC SEGMENTATION SYSTEM".center(80))
-        print("Pixel-by-Pixel Voting Edition".center(80))
+        print("True Pixel-by-Pixel Majority Voting Edition".center(80))
         print("="*80)
         
         # Check if methods directory exists

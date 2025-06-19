@@ -10,8 +10,29 @@ def apply_filter(image):
     if len(result.shape) == 3:
         result = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
     
-    # Apply threshold
-    _, result = cv2.threshold(result, 127, 255, cv2.THRESH_BINARY)
+    # --- ENHANCEMENT START ---
+    # Use Otsu's method to find the optimal threshold automatically
+    # This is far more robust than a fixed value like 127
+    _, result = cv2.threshold(result, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # --- ENHANCEMENT END ---
+    
+    # Apply morphological operation
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    result = cv2.morphologyEx(result, cv2.MORPH_CLOSE, kernel)
+    
+    return result
+
+def apply_adaptive_filter(image):
+    """Alternative filter using adaptive thresholding for varying illumination"""
+    result = image.copy()
+    
+    # Convert to grayscale if needed
+    if len(result.shape) == 3:
+        result = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
+    
+    # Apply adaptive threshold
+    result = cv2.adaptiveThreshold(result, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                  cv2.THRESH_BINARY, 11, 2)
     
     # Apply morphological operation
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -123,9 +144,9 @@ def calculate_concentricity(inner_circle_info, outer_circle_info):
     
     return concentricity_info
 
-def segment_with_threshold(image_path, output_dir='output_threshold'):
+def segment_with_threshold(image_path, output_dir='output_threshold', use_adaptive=False):
     """
-    Main function modified for unified system
+    Main function modified for unified system with Otsu's method
     Returns standardized results
     """
     # Create output directory
@@ -159,11 +180,30 @@ def segment_with_threshold(image_path, output_dir='output_threshold'):
     base_filename = os.path.splitext(os.path.basename(image_path))[0]
     
     try:
-        # Apply the filter
-        filtered_image = apply_filter(original_image)
+        # Apply the filter (now using Otsu's method)
+        if use_adaptive:
+            filtered_image = apply_adaptive_filter(original_image)
+        else:
+            filtered_image = apply_filter(original_image)
         
-        # Find black annulus and inner white pixels
-        black_mask, inner_white_mask, inner_circle_info, outer_circle_info = find_annulus_and_inner_circle(filtered_image)
+        # Try both methods if the first fails
+        attempts = 0
+        max_attempts = 2
+        
+        while attempts < max_attempts:
+            # Find black annulus and inner white pixels
+            black_mask, inner_white_mask, inner_circle_info, outer_circle_info = find_annulus_and_inner_circle(filtered_image)
+            
+            if inner_circle_info and outer_circle_info:
+                break
+            
+            # If first attempt failed, try the other method
+            attempts += 1
+            if attempts < max_attempts:
+                if use_adaptive:
+                    filtered_image = apply_filter(original_image)  # Try Otsu
+                else:
+                    filtered_image = apply_adaptive_filter(original_image)  # Try adaptive
         
         # Calculate concentricity
         concentricity_info = calculate_concentricity(inner_circle_info, outer_circle_info)
@@ -181,7 +221,15 @@ def segment_with_threshold(image_path, output_dir='output_threshold'):
                 result['confidence'] = 0.7
         else:
             # Fallback: try to find any circular structure
-            contours, _ = cv2.findContours(filtered_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # First, apply contrast enhancement
+            gray = cv2.cvtColor(original_image, cv2.COLOR_BGR2GRAY) if len(original_image.shape) == 3 else original_image
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(gray)
+            
+            # Try Otsu on enhanced image
+            _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if contours:
                 largest = max(contours, key=cv2.contourArea)
                 (x, y), radius = cv2.minEnclosingCircle(largest)

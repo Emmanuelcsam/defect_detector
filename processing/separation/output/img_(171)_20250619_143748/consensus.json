@@ -1,0 +1,66 @@
+{
+    "consensus_strength": {
+        "core": 0.052371680491255145,
+        "cladding": 0.039922518004115226,
+        "ferrule": 0.9077058015046297
+    },
+    "contributing_methods": [
+        "guess_approach",
+        "segmentation"
+    ],
+    "num_valid_results": 2,
+    "agreement_stats": {
+        "unanimous_pixels": 955262,
+        "majority_pixels": 955262,
+        "minority_pixels": 40066,
+        "min_agreement": 2
+    },
+    "all_results": [
+        {
+            "method_name": "guess_approach",
+            "center": [
+                554.0,
+                445.0
+            ],
+            "core_radius": 146.0,
+            "cladding_radius": 174.0,
+            "confidence": 0.75,
+            "execution_time": 2.7607429027557373,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "segmentation",
+            "center": [
+                547.0,
+                457.0
+            ],
+            "core_radius": 109.0,
+            "cladding_radius": 168.0,
+            "confidence": 0.9,
+            "execution_time": 0.9622335433959961,
+            "error": null,
+            "has_masks": true
+        },
+        {
+            "method_name": "computational_separation",
+            "center": null,
+            "core_radius": null,
+            "cladding_radius": null,
+            "confidence": 0.0,
+            "execution_time": 17.100674867630005,
+            "error": "Cladding radius 500.8739348655152 is too large for image size",
+            "has_masks": false
+        },
+        {
+            "method_name": "gradient_approach",
+            "center": null,
+            "core_radius": null,
+            "cladding_radius": null,
+            "confidence": 0.0,
+            "execution_time": 1.116708517074585,
+            "error": "boolean index did not match indexed array along axis 0; size of axis is 1 but size of corresponding boolean axis is 864",
+            "has_masks": false
+        }
+    ]
+}

@@ -20,10 +20,10 @@ def get_edge_points(image, sigma=1.5, low_threshold=0.1, high_threshold=0.3):
     points = np.argwhere(edges).astype(float) # argwhere returns (row, col) which is (y, x)
     return points[:, ::-1] # Return as (x, y)
 
-def generate_hypotheses_ransac(points, num_iterations=1000, inlier_threshold=1.0):
+def generate_hypotheses_ransac(points, num_iterations=2000, inlier_threshold=1.5):
     """
     Generates a highly robust initial guess for the center and radii using a custom
-    RANSAC and Radial Histogram Voting scheme.
+    RANSAC and Radial Histogram Voting scheme with improved parameters for low-contrast images.
     """
     best_score = -1
     best_params = None
@@ -138,7 +138,7 @@ def create_final_masks(image_shape, params):
 
 def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
     """
-    Main processing function modified for unified system
+    Main processing function modified for unified system with enhanced contrast
     Returns standardized results
     """
     # Initialize result dictionary
@@ -169,6 +169,12 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
         return result
         
     gray_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2GRAY)
+    
+    # ---- ENHANCEMENT START ----
+    # Enhance contrast using histogram equalization for low-contrast images
+    gray_image = cv2.equalizeHist(gray_image)
+    # ---- ENHANCEMENT END ----
+    
     base_filename = os.path.splitext(os.path.basename(image_path))[0]
     
     try:
@@ -181,7 +187,7 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
                 json.dump(result, f, indent=4)
             return result
         
-        # STAGE 2: Generate robust hypothesis with RANSAC
+        # STAGE 2: Generate robust hypothesis with enhanced RANSAC
         initial_guess = generate_hypotheses_ransac(edge_points)
         if initial_guess is None: 
             result['error'] = "RANSAC failed to find a suitable hypothesis"
@@ -244,7 +250,7 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
         plt.gca().add_artist(circle1)
         plt.gca().add_artist(circle2)
         plt.scatter(edge_points[:, 0], edge_points[:, 1], s=1, c='red', alpha=0.3, label='Edge Points')
-        plt.title(f'Computational Geometric Fit')
+        plt.title(f'Computational Geometric Fit (Enhanced)')
         plt.legend()
         plt.savefig(os.path.join(output_dir, f"{base_filename}_computational_fit.png"))
         plt.close()

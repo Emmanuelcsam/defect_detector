@@ -1,0 +1,14 @@
+{
+    "source_file": "C:\\Users\\Saem1001\\Desktop\\clean_dataset\\test\\img (49).jpg",
+    "analysis_timestamp": "2025-06-19 14:19:03",
+    "image_info": {
+        "width": 1152,
+        "height": 864
+    },
+    "final_parameters": {
+        "cx": 558,
+        "cy": 469,
+        "r_core": 123.0,
+        "r_cladding": 143.0
+    }
+}

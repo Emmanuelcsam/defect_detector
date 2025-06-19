@@ -3,24 +3,30 @@ import cv2 as cv
 import os
 import json
 
-def preprocess_image(img):
+def preprocess_image(img, canny_thresh1=50, canny_thresh2=150, apply_blur_after_canny=False):
     """
     This function takes in the raw greyscale image,
     runs a contrast enhancement (CLAHE),
     and runs a canny filter to make the circles easier to see.
+    Now with adjustable Canny thresholds for low-contrast images.
     """
     assert img is not None, "image could not be read"
    
     clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize = (8,8))
     clahe_image = clahe.apply(img)
    
-    canny_image = cv.Canny(clahe_image, 100, 200, apertureSize= 3)
+    # Apply a gentle blur BEFORE Canny to reduce noise without destroying edges
+    img_blurred = cv.GaussianBlur(clahe_image, (3, 3), 0)
+    
+    # Use adjustable Canny thresholds
+    canny_image = cv.Canny(img_blurred, canny_thresh1, canny_thresh2, apertureSize=3)
  
-    # apply a gaussian blur to improve yield of circle recognition
-    img_blurred = cv.GaussianBlur(canny_image,(5, 5), 0)
+    # Optional: apply blur after Canny (often not needed)
+    if apply_blur_after_canny:
+        canny_image = cv.GaussianBlur(canny_image, (5, 5), 0)
  
     processed_dict = {
-        "blurred_canny": img_blurred,
+        "blurred_canny": canny_image,
         "original_img": img          
     }
     return processed_dict
@@ -55,9 +61,10 @@ def core_mask(image: np.ndarray, x0: int, y0: int, radius: int) -> np.ndarray:
     output_image = arr
     return output_image
 
-def segment_with_hough(image_path, output_dir='output_hough'):
+def segment_with_hough(image_path, output_dir='output_hough', minDist=50, param1=200, param2=20,
+                      canny_thresh1=50, canny_thresh2=150):
     """
-    Main function modified for unified system
+    Main function modified for unified system with adjustable parameters
     Returns standardized results
     """
     # Create output directory
@@ -91,15 +98,20 @@ def segment_with_hough(image_path, output_dir='output_hough'):
     base_filename = os.path.splitext(os.path.basename(image_path))[0]
     
     try:
-        # Preprocess
-        preproc = preprocess_image(img)
+        # Preprocess with adjustable parameters
+        preproc = preprocess_image(img, canny_thresh1=canny_thresh1, canny_thresh2=canny_thresh2)
         proc_img = preproc["blurred_canny"]
         cimg = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
        
-        # Detect Cladding
-        cladding_circle = cv.HoughCircles(proc_img, cv.HOUGH_GRADIENT, dp=1, minDist=10,
-                                 param1=50, param2=40, minRadius=100, maxRadius=500)
+        # Detect Cladding with adjusted parameters for low-contrast images
+        cladding_circle = cv.HoughCircles(proc_img, cv.HOUGH_GRADIENT, dp=1, minDist=minDist,
+                                         param1=param1, param2=param2, minRadius=100, maxRadius=500)
        
+        if cladding_circle is None:
+            # Try with even lower param2 for faint circles
+            cladding_circle = cv.HoughCircles(proc_img, cv.HOUGH_GRADIENT, dp=1, minDist=minDist,
+                                            param1=param1, param2=15, minRadius=100, maxRadius=500)
+        
         if cladding_circle is None:
             result['error'] = "Could not detect cladding circle"
             with open(os.path.join(output_dir, f'{base_filename}_hough_result.json'), 'w') as f:
@@ -117,21 +129,21 @@ def segment_with_hough(image_path, output_dir='output_hough'):
         # Enhance cladding for core detection
         clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize = (8,8))
         clahe_cladding = clahe.apply(cladding)
-        canny_clad = cv.Canny(clahe_cladding, 100, 200)
+        canny_clad = cv.Canny(clahe_cladding, canny_thresh1, canny_thresh2)
         canny_clad_blurred = cv.GaussianBlur(canny_clad,(7, 7), 0)
      
-        # Detect Core
+        # Detect Core with adjusted parameters
         core_circle = cv.HoughCircles(canny_clad_blurred, cv.HOUGH_GRADIENT, dp=1, minDist=10,
-                              param1=50, param2=40, minRadius=20, maxRadius=80)
+                                    param1=param1, param2=param2, minRadius=20, maxRadius=80)
        
         if core_circle is None:
-            # Try with enhanced parameters
+            # Try with adjusted parameters for low-contrast images
             clahe_adjusted_cladding = clahe.apply(cladding)
-            new_cladding_canny = cv.Canny(clahe_adjusted_cladding, 100, 200)
-            new_canny_clad_blurred = cv.GaussianBlur(new_cladding_canny,(7, 7), 0)
+            new_cladding_canny = cv.Canny(clahe_adjusted_cladding, 30, 100)  # Lower thresholds
+            new_canny_clad_blurred = cv.GaussianBlur(new_cladding_canny,(5, 5), 0)  # Smaller blur
             
             core_circle = cv.HoughCircles(new_canny_clad_blurred, cv.HOUGH_GRADIENT, dp=1, minDist=10,
-                        param1=50, param2=40, minRadius=20, maxRadius=60)
+                                        param1=param1, param2=15, minRadius=20, maxRadius=60)
      
         if core_circle is None:
             # Use estimate based on cladding
