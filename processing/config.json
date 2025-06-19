@@ -1,8 +1,8 @@
 {
   "paths": {
-    "results_dir": "C:/Users/Saem1001/Documents/GitHub/defect_detector/processing/results",
-    "zones_methods_dir": "C:/Users/Saem1001/Documents/GitHub/defect_detector/processing/zones_methods",
-    "detection_knowledge_base": "C:/Users/Saem1001/Documents/GitHub/defect_detector/processing/detection_kb.json"
+    "results_dir": "./processing/results",
+    "zones_methods_dir": "./zones_methods",
+    "detection_knowledge_base": "./processing/detection_kb.json"
   },
   "process_settings": {
     "output_folder_name": "1_reimagined"

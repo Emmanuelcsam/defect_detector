@@ -103,21 +103,21 @@ class UnifiedSegmentationSystem:
     
     def load_methods(self):
         """Dynamically load all segmentation methods"""
+        # Fixed mapping of file names to method names
         method_files = [
-            'guess_approach.py',
-            'hough_separation.py', 
-            'segmentation.py',
-            'threshold_separation.py',
-            'adaptive_intensity.py',
-            'computational_separation.py',
-            'gradient_approach.py',
-            'bright_core_extractor.py' # ADDED FOR INTEGRATION
+            ('guess_approach.py', 'guess_approach'),
+            ('hough_separation.py', 'hough_separation'),  # Fixed: was 'hough_seperation'
+            ('segmentation.py', 'segmentation'),
+            ('threshold_separation.py', 'threshold_separation'),  # Fixed: was 'threshold_seperation'
+            ('adaptive_intensity.py', 'adaptive_intensity'),  # Fixed: was 'adaptive_intensity_approach'
+            ('computational_separation.py', 'computational_separation'),
+            ('gradient_approach.py', 'gradient_approach'),
+            ('bright_core_extractor.py', 'bright_core_extractor')
         ]
         
-        for method_file in method_files:
+        for method_file, method_name in method_files:
             method_path = self.methods_dir / method_file
             if method_path.exists():
-                method_name = method_file.replace('.py', '')
                 try:
                     self.methods[method_name] = {
                         'path': method_path,
@@ -135,7 +135,6 @@ class UnifiedSegmentationSystem:
         h, w = image_shape
         
         # Validate parameters
-        # ADJUSTED FOR INTEGRATION: Changed 'cladding_radius is None' to check if it's a valid number for methods that provide it
         if center is None or core_radius is None:
             return None
             
@@ -144,7 +143,7 @@ class UnifiedSegmentationSystem:
         # Check if parameters are reasonable
         if not (0 <= cx < w and 0 <= cy < h):
             return None
-        if core_radius <= 0: # Check only core radius as it's guaranteed
+        if core_radius <= 0:
             return None
         if core_radius > min(w, h):
             return None
@@ -155,7 +154,7 @@ class UnifiedSegmentationSystem:
         
         core_mask = (dist_from_center <= core_radius).astype(np.uint8)
 
-        # ADJUSTED FOR INTEGRATION: Handle case where cladding is not found by a method
+        # Handle case where cladding is not found by a method
         if cladding_radius is not None and cladding_radius > core_radius:
             cladding_mask = ((dist_from_center > core_radius) & 
                             (dist_from_center <= cladding_radius)).astype(np.uint8)
@@ -197,9 +196,9 @@ if isinstance(result, dict):
     with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         json.dump(result, outf)
 """)
-            elif method_name == 'hough_seperation':
+            elif method_name == 'hough_separation':  # Fixed name
                 f.write(f"""
-from hough_seperation import segment_with_hough
+from hough_separation import segment_with_hough
 result = segment_with_hough(r"{image_path}", r"{temp_output}")
 with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
     json.dump(result, outf)
@@ -213,16 +212,16 @@ if seg_result and 'result' in seg_result:
     with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         json.dump(seg_result['result'], outf)
 """)
-            elif method_name == 'threshold_seperation':
+            elif method_name == 'threshold_separation':  # Fixed name
                 f.write(f"""
-from threshold_seperation import segment_with_threshold
+from threshold_separation import segment_with_threshold
 result = segment_with_threshold(r"{image_path}", r"{temp_output}")
 with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
     json.dump(result, outf)
 """)
-            elif method_name == 'adaptive_intensity_approach':
+            elif method_name == 'adaptive_intensity':  # Fixed name
                 f.write(f"""
-from adaptive_intensity_approach import adaptive_segment_image
+from adaptive_intensity import adaptive_segment_image
 result = adaptive_segment_image(r"{image_path}", output_dir=r"{temp_output}")
 with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
     json.dump(result, outf)
@@ -241,7 +240,6 @@ result = segment_with_gradient(r"{image_path}", r"{temp_output}")
 with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
     json.dump(result, outf)
 """)
-            # ADDED FOR INTEGRATION
             elif method_name == 'bright_core_extractor':
                 f.write(f"""
 from bright_core_extractor import analyze_core

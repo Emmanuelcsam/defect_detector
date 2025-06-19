@@ -46,9 +46,11 @@ class PipelineOrchestrator:
     def __init__(self, config_path):
         """Initializes the orchestrator with configuration."""
         logging.info("Initializing Pipeline Orchestrator...")
+        self.config_path = Path(config_path).resolve()  # Store absolute config path
         self.config = self.load_config(config_path)
+        self.config = self.resolve_config_paths(self.config)  # Resolve relative paths
         self.results_base_dir = Path(self.config['paths']['results_dir'])
-        self.results_base_dir.mkdir(exist_ok=True)
+        self.results_base_dir.mkdir(parents=True, exist_ok=True)  # Create with parents
         logging.info(f"Results will be saved in: {self.results_base_dir}")
 
     def load_config(self, config_path):
@@ -61,6 +63,20 @@ class PipelineOrchestrator:
         except Exception as e:
             logging.error(f"Fatal Error: Could not load or parse config.json: {e}")
             sys.exit(1)
+
+    def resolve_config_paths(self, config):
+        """Convert relative paths in config to absolute paths based on config file location"""
+        config_dir = self.config_path.parent
+        
+        # Update paths to be absolute
+        for key in ['results_dir', 'zones_methods_dir', 'detection_knowledge_base']:
+            if key in config['paths']:
+                path = Path(config['paths'][key])
+                if not path.is_absolute():
+                    # Make it absolute relative to the config directory
+                    config['paths'][key] = str(config_dir / path)
+        
+        return config
 
     def run_full_pipeline(self, input_image_path: Path):
         """
@@ -114,12 +130,12 @@ class PipelineOrchestrator:
         separation_cfg = self.config['separation_settings']
         zones_methods_dir = self.config['paths']['zones_methods_dir']
         separated_dir = run_dir / separation_cfg['output_folder_name']
-        separated_dir.mkdir(exist_ok=True) # <-- ADD THIS LINE
+        separated_dir.mkdir(exist_ok=True)
         
         all_separated_regions = []
 
         try:
-            # Initialize the segmentation system once
+            # Initialize the segmentation system with the correct methods directory
             separator = UnifiedSegmentationSystem(methods_dir=zones_methods_dir)
             
             for image_path in image_paths:
@@ -128,7 +144,6 @@ class PipelineOrchestrator:
                 image_separation_output_dir = separated_dir / image_path.stem
                 
                 # Run separation and get consensus masks
-                # The modified separation.py now accepts an output directory
                 consensus = separator.process_image(image_path, str(image_separation_output_dir))
                 
                 if consensus and consensus.get('saved_regions'):
@@ -149,11 +164,16 @@ class PipelineOrchestrator:
         logging.info(">>> STAGE 3: DETECTION - Analyzing for defects...")
         detection_cfg = self.config['detection_settings']
         detection_output_dir = run_dir / detection_cfg['output_folder_name']
+        detection_output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
             # Create the config object for the detector from our main config file
             omni_config_dict = detection_cfg['config'].copy()
-            omni_config_dict['knowledge_base_path'] = self.config['paths']['detection_knowledge_base']
+            
+            # Handle the knowledge base path
+            kb_path = self.config['paths'].get('detection_knowledge_base')
+            if kb_path:
+                omni_config_dict['knowledge_base_path'] = kb_path
             
             # Pass the dictionary to the OmniConfig dataclass to create an instance
             omni_config = OmniConfig(**omni_config_dict)
@@ -165,6 +185,7 @@ class PipelineOrchestrator:
                 logging.info(f"Detecting defects in: {image_path.name}")
                 # Define the output dir for this specific image's detection report
                 image_detection_output_dir = detection_output_dir / image_path.stem
+                image_detection_output_dir.mkdir(parents=True, exist_ok=True)
                 
                 # Run analysis. The modified detection.py accepts an output directory.
                 analyzer.analyze_end_face(str(image_path), str(image_detection_output_dir))
@@ -208,8 +229,15 @@ def ask_for_images() -> list[Path]:
 def ask_for_folder() -> Path | None:
     """Prompts the user for a single folder path and validates it."""
     folder_path_str = input("\nEnter the full path to the folder containing images: ").strip()
-    # shlex.split can handle if the user pastes a quoted path
-    folder_path = Path(shlex.split(folder_path_str)[0])
+    
+    # Handle quoted paths
+    if folder_path_str:
+        folder_path_str = shlex.split(folder_path_str)[0] if folder_path_str else ""
+    
+    if not folder_path_str:
+        return None
+        
+    folder_path = Path(folder_path_str)
     
     if folder_path.is_dir():
         return folder_path
@@ -234,15 +262,21 @@ def main():
     # Remove leading/trailing quotes that might be pasted from file explorers
     if config_path_str.startswith('"') and config_path_str.endswith('"'):
         config_path_str = config_path_str[1:-1]
-
     
     config_path = Path(config_path_str)
     if not config_path.exists():
         logging.error(f"Fatal Error: Configuration file not found at: {config_path}")
+        print("\nPlease run setup.py first to create the necessary files and directories.")
         sys.exit(1)
         
     # Initialize the orchestrator
-    orchestrator = PipelineOrchestrator(config_path)
+    try:
+        orchestrator = PipelineOrchestrator(str(config_path))
+    except Exception as e:
+        logging.error(f"Failed to initialize pipeline: {e}")
+        print("\nPlease check your configuration file and ensure all required directories exist.")
+        print("You may need to run setup.py first.")
+        sys.exit(1)
     
     # Main menu loop
     while True:
@@ -261,7 +295,11 @@ def main():
             
             logging.info(f"Starting processing for {len(image_paths)} image(s).")
             for image_path in image_paths:
-                orchestrator.run_full_pipeline(image_path)
+                try:
+                    orchestrator.run_full_pipeline(image_path)
+                except Exception as e:
+                    logging.error(f"Failed to process {image_path}: {e}")
+                    continue
             logging.info("Finished processing all specified images.")
             
         elif choice == '2':
@@ -270,8 +308,15 @@ def main():
                 continue
                 
             logging.info(f"Searching for images in directory: {folder_path}")
-            image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
-            image_files = [p for p in folder_path.glob("**/*") if p.suffix.lower() in image_extensions]
+            image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+            image_files = []
+            
+            for ext in image_extensions:
+                image_files.extend(folder_path.glob(f"*{ext}"))
+                image_files.extend(folder_path.glob(f"*{ext.upper()}"))
+            
+            # Remove duplicates
+            image_files = list(set(image_files))
             
             if not image_files:
                 logging.warning(f"No images with extensions ({', '.join(image_extensions)}) found in {folder_path}")
@@ -279,7 +324,11 @@ def main():
             
             logging.info(f"Found {len(image_files)} images to process. Starting batch.")
             for image_file in sorted(image_files):
-                orchestrator.run_full_pipeline(image_file)
+                try:
+                    orchestrator.run_full_pipeline(image_file)
+                except Exception as e:
+                    logging.error(f"Failed to process {image_file}: {e}")
+                    continue
             logging.info("Finished processing all images in the folder.")
             
         elif choice == '3':
