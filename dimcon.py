@@ -29,7 +29,7 @@ except ImportError:
     print("Warning: requests not installed. Install with: pip install requests")
 
 # Configuration
-TARGET_IP = "169.254.78.159"
+TARGET_IP = ""  # Will be set by user input
 DESTINATION_DIR = r"C:\Users\Saem1001\Desktop\dimension_connect"
 
 # Directories to skip
@@ -294,24 +294,149 @@ def check_open_ports():
     
     return open_ports
 
+def get_local_ip():
+    """Get the local IP address"""
+    try:
+        # Create a socket and connect to an external host
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except:
+        return None
+
+def quick_network_scan(network_prefix, timeout=0.5):
+    """Quickly scan for active IPs in the local network"""
+    print(f"\nScanning {network_prefix}.0/24 for active hosts...")
+    print("(This may take a moment...)")
+    
+    active_ips = []
+    
+    # Scan common IPs first
+    common_ips = [1, 2, 254, 100, 101, 102, 103, 104, 105]
+    
+    for last_octet in common_ips:
+        ip = f"{network_prefix}.{last_octet}"
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        
+        # Try common ports
+        for port in [445, 139, 80, 22]:
+            result = sock.connect_ex((ip, port))
+            if result == 0:
+                active_ips.append(ip)
+                print(f"  ✓ Found: {ip}")
+                break
+        
+        sock.close()
+    
+    return active_ips
+
+def suggest_ip_addresses(skip_scan=False):
+    """Suggest common IP addresses based on local network"""
+    local_ip = get_local_ip()
+    suggestions = []
+    
+    if local_ip:
+        # Get network prefix (e.g., 192.168.1.x -> 192.168.1)
+        parts = local_ip.split('.')
+        network_prefix = '.'.join(parts[:3])
+        
+        print(f"\nYour local IP: {local_ip}")
+        print(f"Network: {network_prefix}.0/24")
+        
+        # Ask if user wants to scan (unless skip_scan is True)
+        if not skip_scan:
+            scan_choice = input("\nScan network for active devices? (y/N): ").strip().lower()
+            
+            if scan_choice == 'y':
+                active_ips = quick_network_scan(network_prefix)
+                if active_ips:
+                    suggestions = active_ips[:5]  # Limit to 5 suggestions
+                else:
+                    print("No active devices found.")
+        
+        # Add default suggestions if no scan or no results
+        if not suggestions:
+            suggestions = [
+                f"{network_prefix}.1",    # Common router IP
+                f"{network_prefix}.254",  # Alternative router IP
+                "169.254.78.159",        # Your default IP
+            ]
+        
+        print(f"\nAvailable IPs:")
+        for i, ip in enumerate(suggestions, 1):
+            print(f"  {i}. {ip}")
+    
+    return suggestions
+
 def main():
     global AUTO_MODE, INCLUDE_EXTENSIONS, SKIP_DIRS, ONLY_DIRS, TARGET_IP, DESTINATION_DIR
     
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Fetch files from a network device')
     parser.add_argument('-a', '--auto', action='store_true', help='Run in automatic mode (no prompts)')
-    parser.add_argument('-t', '--target', help='Target IP address', default=TARGET_IP)
+    parser.add_argument('-t', '--target', help='Target IP address')
     parser.add_argument('-d', '--destination', help='Destination directory', default=DESTINATION_DIR)
     parser.add_argument('-e', '--extensions', nargs='+', help='File extensions to include (e.g., .txt .pdf)')
     parser.add_argument('--skip-dirs', nargs='+', help='Additional directories to skip')
     parser.add_argument('--only-dirs', nargs='+', help='Only copy these directories')
+    parser.add_argument('--no-scan', action='store_true', help='Skip network scan when prompting for IP')
     
     args = parser.parse_args()
     
     # Update configuration
     AUTO_MODE = args.auto
-    TARGET_IP = args.target
-    DESTINATION_DIR = args.destination
+    if args.destination:
+        DESTINATION_DIR = args.destination
+    
+    # Get target IP - either from command line or user input
+    if args.target:
+        TARGET_IP = args.target
+    else:
+        print("=== Dimension Connect File Fetcher ===")
+        
+        # Show IP suggestions
+        suggestions = suggest_ip_addresses()
+        
+        print("\nEnter the target IP address to scan")
+        if suggestions:
+            print(f"(Enter a number 1-{len(suggestions)} for suggestions above, or type full IP)")
+        print("(Press Enter for default: 169.254.78.159)")
+        
+        user_input = input("\nTarget IP: ").strip()
+        
+        if not user_input:
+            TARGET_IP = "169.254.78.159"
+        elif user_input.isdigit() and suggestions and 1 <= int(user_input) <= len(suggestions):
+            TARGET_IP = suggestions[int(user_input) - 1]
+            print(f"Selected: {TARGET_IP}")
+        else:
+            TARGET_IP = user_input
+        
+        # Also ask for destination if not in auto mode
+        if not AUTO_MODE:
+            print(f"\nEnter destination directory")
+            print(f"(Press Enter for default: {DESTINATION_DIR})")
+            custom_dest = input("Destination: ").strip()
+            if custom_dest:
+                DESTINATION_DIR = custom_dest
+        print()
+    
+    # Validate IP address format
+    try:
+        parts = TARGET_IP.split('.')
+        if len(parts) != 4:
+            raise ValueError("Invalid IP format")
+        for part in parts:
+            num = int(part)
+            if num < 0 or num > 255:
+                raise ValueError("Invalid IP octet")
+    except:
+        print(f"✗ Invalid IP address format: {TARGET_IP}")
+        print("Please use format: xxx.xxx.xxx.xxx")
+        sys.exit(1)
     
     if args.extensions:
         INCLUDE_EXTENSIONS = set(ext if ext.startswith('.') else f'.{ext}' for ext in args.extensions)
@@ -323,6 +448,12 @@ def main():
     if args.only_dirs:
         ONLY_DIRS = set(args.only_dirs)
         print(f"Only copying directories: {', '.join(ONLY_DIRS)}")
+    
+    # Update destination to include IP address if using default path
+    base_default_path = r"C:\Users\Saem1001\Desktop\dimension_connect"
+    if DESTINATION_DIR == base_default_path:
+        # Default path - add IP to it
+        DESTINATION_DIR = os.path.join(base_default_path, TARGET_IP.replace('.', '_'))
     
     print(f"=== Dimension Connect File Fetcher ===")
     print(f"Target IP: {TARGET_IP}")
