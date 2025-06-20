@@ -23,18 +23,6 @@ except ImportError:
     HAS_MATPLOTLIB = False
     print("Warning: matplotlib not available, some visualizations will be skipped")
 
-# Import scipy components for enhanced voting
-try:
-    from scipy.ndimage import median_filter, gaussian_filter
-    from scipy.ndimage import binary_opening, binary_closing
-    from scipy.signal import find_peaks, savgol_filter
-    from scipy.sparse.linalg import svds
-    from scipy.optimize import minimize
-    HAS_SCIPY_FULL = True
-except ImportError:
-    HAS_SCIPY_FULL = False
-    print("Warning: Some scipy components not available, using basic voting")
-
 class NumpyEncoder(json.JSONEncoder):
     """Custom encoder for numpy data types for JSON serialization."""
     def default(self, obj):
@@ -45,280 +33,6 @@ class NumpyEncoder(json.JSONEncoder):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return super(NumpyEncoder, self).default(obj)
-
-class EnhancedVotingSystem:
-    """Enhanced voting system with weighted votes, confidence scoring, and spatial coherence"""
-    
-    def __init__(self, min_agreement_ratio=0.3, use_spatial_coherence=True):
-        self.min_agreement_ratio = min_agreement_ratio
-        self.use_spatial_coherence = use_spatial_coherence
-        
-    def weighted_pixel_voting_consensus(self, 
-                                      results: List['SegmentationResult'], 
-                                      method_scores: Dict[str, float],
-                                      image_shape: Tuple[int, int]) -> Dict[str, Any]:
-        """
-        Enhanced consensus using weighted voting with confidence scoring
-        """
-        valid_results = [r for r in results if r.error is None and r.masks is not None]
-        
-        if not valid_results:
-            return None
-            
-        print(f"\nPerforming weighted pixel voting with {len(valid_results)} valid results...")
-        
-        h, w = image_shape
-        num_methods = len(valid_results)
-        
-        # Create weighted vote accumulator
-        weighted_votes = np.zeros((h, w, 3), dtype=np.float32)
-        
-        # Track which methods vote for each pixel/region
-        method_support = [[[] for _ in range(3)] for _ in range(h * w)]
-        
-        # Collect weighted votes
-        for r in valid_results:
-            # Get method weight (default to 1.0 if not found)
-            weight = method_scores.get(r.method_name, 1.0)
-            
-            # Apply method confidence if available
-            if hasattr(r, 'confidence') and r.confidence > 0:
-                weight *= r.confidence
-            
-            # Add weighted votes
-            weighted_votes[:, :, 0] += (r.masks['core'] > 0).astype(np.float32) * weight
-            weighted_votes[:, :, 1] += (r.masks['cladding'] > 0).astype(np.float32) * weight
-            weighted_votes[:, :, 2] += (r.masks['ferrule'] > 0).astype(np.float32) * weight
-            
-            # Track which methods support each region
-            for y in range(h):
-                for x in range(w):
-                    idx = y * w + x
-                    if r.masks['core'][y, x] > 0:
-                        method_support[idx][0].append(r.method_name)
-                    if r.masks['cladding'][y, x] > 0:
-                        method_support[idx][1].append(r.method_name)
-                    if r.masks['ferrule'][y, x] > 0:
-                        method_support[idx][2].append(r.method_name)
-        
-        # Calculate total weight per pixel
-        total_weights = np.sum(weighted_votes, axis=2)
-        
-        # Create confidence map (0-1) based on agreement strength
-        max_votes = np.max(weighted_votes, axis=2)
-        confidence_map = np.zeros((h, w), dtype=np.float32)
-        
-        # Avoid division by zero
-        mask = total_weights > 0
-        confidence_map[mask] = max_votes[mask] / total_weights[mask]
-        
-        # Initial classification based on weighted votes
-        initial_classification = np.argmax(weighted_votes, axis=2)
-        
-        # Apply minimum agreement threshold
-        max_possible_weight = sum(method_scores.get(r.method_name, 1.0) * r.confidence 
-                                 for r in valid_results)
-        agreement_threshold = self.min_agreement_ratio * max_possible_weight
-        sufficient_agreement = max_votes >= agreement_threshold
-        
-        # For pixels with insufficient agreement, mark as uncertain
-        uncertain_pixels = ~sufficient_agreement
-        
-        # Apply spatial coherence if enabled
-        if self.use_spatial_coherence and HAS_SCIPY_FULL:
-            classification = self.apply_spatial_coherence(
-                initial_classification, confidence_map, uncertain_pixels
-            )
-        else:
-            classification = initial_classification
-            
-        # Handle remaining uncertain pixels
-        if np.any(uncertain_pixels):
-            classification = self.resolve_uncertain_pixels(
-                classification, uncertain_pixels, weighted_votes
-            )
-        
-        # Create final masks
-        final_core_mask = (classification == 0).astype(np.uint8)
-        final_cladding_mask = (classification == 1).astype(np.uint8)
-        final_ferrule_mask = (classification == 2).astype(np.uint8)
-        
-        # Post-process masks to ensure consistency
-        final_core_mask, final_cladding_mask, final_ferrule_mask = self.ensure_mask_consistency(
-            final_core_mask, final_cladding_mask, final_ferrule_mask
-        )
-        
-        # Calculate detailed statistics
-        consensus_strength = {
-            'core': float(np.sum(weighted_votes[:, :, 0]) / (h * w * max_possible_weight)) if max_possible_weight > 0 else 0,
-            'cladding': float(np.sum(weighted_votes[:, :, 1]) / (h * w * max_possible_weight)) if max_possible_weight > 0 else 0,
-            'ferrule': float(np.sum(weighted_votes[:, :, 2]) / (h * w * max_possible_weight)) if max_possible_weight > 0 else 0
-        }
-        
-        # Calculate agreement statistics
-        high_confidence_pixels = np.sum(confidence_map > 0.7)
-        medium_confidence_pixels = np.sum((confidence_map > 0.4) & (confidence_map <= 0.7))
-        low_confidence_pixels = np.sum(confidence_map <= 0.4)
-        
-        agreement_stats = {
-            'high_confidence_pixels': int(high_confidence_pixels),
-            'medium_confidence_pixels': int(medium_confidence_pixels),
-            'low_confidence_pixels': int(low_confidence_pixels),
-            'mean_confidence': float(np.mean(confidence_map)),
-            'uncertain_pixels_resolved': int(np.sum(uncertain_pixels))
-        }
-        
-        # Identify most reliable methods
-        method_agreement_scores = self.calculate_method_agreement_scores(
-            valid_results, classification, method_scores
-        )
-        
-        return {
-            'masks': {
-                'core': final_core_mask,
-                'cladding': final_cladding_mask,
-                'ferrule': final_ferrule_mask
-            },
-            'confidence_map': confidence_map,
-            'consensus_strength': consensus_strength,
-            'contributing_methods': [r.method_name for r in valid_results],
-            'num_valid_results': len(valid_results),
-            'agreement_stats': agreement_stats,
-            'method_agreement_scores': method_agreement_scores,
-            'weighted_votes': weighted_votes,
-            'all_results': [r.to_dict() for r in results]
-        }
-    
-    def apply_spatial_coherence(self, classification, confidence_map, uncertain_pixels):
-        """Apply spatial coherence to reduce noise and resolve uncertainties"""
-        if not HAS_SCIPY_FULL:
-            return classification
-            
-        # Use median filter on classification to enforce spatial coherence
-        class_float = classification.astype(np.float32)
-        
-        # Apply median filter with larger kernel for uncertain areas
-        filtered = median_filter(class_float, size=5)
-        
-        # For uncertain pixels, use the filtered result
-        result = classification.copy()
-        result[uncertain_pixels] = np.round(filtered[uncertain_pixels]).astype(int)
-        
-        # Apply additional Gaussian smoothing to confidence map
-        smoothed_confidence = gaussian_filter(confidence_map, sigma=2)
-        
-        # For very low confidence areas, use neighborhood majority
-        very_low_conf = smoothed_confidence < 0.3
-        if np.any(very_low_conf):
-            for y, x in np.argwhere(very_low_conf):
-                # Get neighborhood
-                y_min, y_max = max(0, y-3), min(classification.shape[0], y+4)
-                x_min, x_max = max(0, x-3), min(classification.shape[1], x+4)
-                neighborhood = result[y_min:y_max, x_min:x_max]
-                
-                # Use mode of neighborhood
-                if neighborhood.size > 0:
-                    counts = np.bincount(neighborhood.ravel(), minlength=3)
-                    result[y, x] = np.argmax(counts)
-        
-        return result
-    
-    def resolve_uncertain_pixels(self, classification, uncertain_mask, weighted_votes):
-        """Resolve uncertain pixels using advanced strategies"""
-        result = classification.copy()
-        
-        # Strategy 1: Use relative vote strengths even if below threshold
-        uncertain_coords = np.argwhere(uncertain_mask)
-        for y, x in uncertain_coords:
-            votes = weighted_votes[y, x]
-            if np.sum(votes) > 0:
-                # Use relative strengths
-                result[y, x] = np.argmax(votes)
-            else:
-                # No votes at all - use spatial context
-                # Get neighborhood mode
-                y_min, y_max = max(0, y-5), min(classification.shape[0], y+6)
-                x_min, x_max = max(0, x-5), min(classification.shape[1], x+6)
-                neighborhood = result[y_min:y_max, x_min:x_max]
-                
-                if neighborhood.size > 0:
-                    counts = np.bincount(neighborhood.ravel(), minlength=3)
-                    result[y, x] = np.argmax(counts)
-        
-        return result
-    
-    def ensure_mask_consistency(self, core_mask, cladding_mask, ferrule_mask):
-        """Ensure masks are mutually exclusive and spatially consistent"""
-        if not HAS_SCIPY_FULL:
-            return core_mask, cladding_mask, ferrule_mask
-            
-        # Remove small isolated regions
-        kernel = np.ones((3, 3), dtype=np.uint8)
-        
-        # Clean each mask
-        core_mask = binary_opening(core_mask, kernel).astype(np.uint8)
-        core_mask = binary_closing(core_mask, kernel).astype(np.uint8)
-        
-        cladding_mask = binary_opening(cladding_mask, kernel).astype(np.uint8)
-        cladding_mask = binary_closing(cladding_mask, kernel).astype(np.uint8)
-        
-        ferrule_mask = binary_opening(ferrule_mask, kernel).astype(np.uint8)
-        ferrule_mask = binary_closing(ferrule_mask, kernel).astype(np.uint8)
-        
-        # Ensure mutual exclusivity (shouldn't be necessary but just in case)
-        overlap = (core_mask + cladding_mask + ferrule_mask) > 1
-        if np.any(overlap):
-            # Resolve overlaps by distance to expected regions
-            h, w = core_mask.shape
-            center = (h // 2, w // 2)
-            
-            y_coords, x_coords = np.ogrid[:h, :w]
-            dist_from_center = np.sqrt((x_coords - center[1])**2 + (y_coords - center[0])**2)
-            
-            # For overlapping pixels, assign based on distance
-            overlap_coords = np.argwhere(overlap)
-            for y, x in overlap_coords:
-                dist = dist_from_center[y, x]
-                # Simple radial assignment
-                if dist < h * 0.1:  # Inner region -> core
-                    core_mask[y, x] = 1
-                    cladding_mask[y, x] = 0
-                    ferrule_mask[y, x] = 0
-                elif dist < h * 0.4:  # Middle region -> cladding
-                    core_mask[y, x] = 0
-                    cladding_mask[y, x] = 1
-                    ferrule_mask[y, x] = 0
-                else:  # Outer region -> ferrule
-                    core_mask[y, x] = 0
-                    cladding_mask[y, x] = 0
-                    ferrule_mask[y, x] = 1
-        
-        return core_mask, cladding_mask, ferrule_mask
-    
-    def calculate_method_agreement_scores(self, valid_results, final_classification, method_scores):
-        """Calculate how well each method agrees with the final consensus"""
-        agreement_scores = {}
-        h, w = final_classification.shape
-        
-        for result in valid_results:
-            # Calculate pixel-wise agreement
-            method_classification = np.zeros((h, w), dtype=int)
-            method_classification[result.masks['core'] > 0] = 0
-            method_classification[result.masks['cladding'] > 0] = 1
-            method_classification[result.masks['ferrule'] > 0] = 2
-            
-            agreement = np.sum(method_classification == final_classification) / (h * w)
-            
-            # Weight by method score
-            weighted_agreement = agreement * method_scores.get(result.method_name, 1.0)
-            
-            agreement_scores[result.method_name] = {
-                'raw_agreement': float(agreement),
-                'weighted_agreement': float(weighted_agreement),
-                'weight': float(method_scores.get(result.method_name, 1.0))
-            }
-        
-        return agreement_scores
 
 class SegmentationResult:
     """Standardized result format for all segmentation methods"""
@@ -392,15 +106,13 @@ class UnifiedSegmentationSystem:
         # Fixed mapping of file names to method names
         method_files = [
             ('guess_approach.py', 'guess_approach'),
-            ('hough_separation.py', 'hough_separation'),
+            ('hough_separation.py', 'hough_separation'),  # Fixed: was 'hough_seperation'
             ('segmentation.py', 'segmentation'),
-            ('threshold_separation.py', 'threshold_separation'),
-            ('adaptive_intensity.py', 'adaptive_intensity'),
+            ('threshold_separation.py', 'threshold_separation'),  # Fixed: was 'threshold_seperation'
+            ('adaptive_intensity.py', 'adaptive_intensity'),  # Fixed: was 'adaptive_intensity_approach'
             ('computational_separation.py', 'computational_separation'),
             ('gradient_approach.py', 'gradient_approach'),
             ('bright_core_extractor.py', 'bright_core_extractor')
-            ('geometric_approach.py', 'geometric_approach') 
-            ('unified_core_cladding_detector.py', 'unified_detector')         
         ]
         
         for method_file, method_name in method_files:
@@ -465,22 +177,12 @@ class UnifiedSegmentationSystem:
         # Create a Python script to run the method in isolation
         runner_script = temp_output / "runner.py"
         with open(runner_script, 'w') as f:
-            # Add common imports and matplotlib backend fix
             f.write(f"""
 import sys
 import json
 import os
 import numpy as np
 from pathlib import Path
-
-# Fix matplotlib backend BEFORE any imports
-import matplotlib
-matplotlib.use('Agg')
-
-# Disable Qt and other GUI backends
-os.environ['QT_QPA_PLATFORM'] = 'offscreen'
-os.environ['MPLBACKEND'] = 'Agg'
-
 sys.path.insert(0, r"{self.methods_dir}")
 
 # Method-specific imports and execution
@@ -494,7 +196,7 @@ if isinstance(result, dict):
     with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         json.dump(result, outf)
 """)
-            elif method_name == 'hough_separation':
+            elif method_name == 'hough_separation':  # Fixed name
                 f.write(f"""
 from hough_separation import segment_with_hough
 result = segment_with_hough(r"{image_path}", r"{temp_output}")
@@ -510,14 +212,14 @@ if seg_result and 'result' in seg_result:
     with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         json.dump(seg_result['result'], outf)
 """)
-            elif method_name == 'threshold_separation':
+            elif method_name == 'threshold_separation':  # Fixed name
                 f.write(f"""
 from threshold_separation import segment_with_threshold
 result = segment_with_threshold(r"{image_path}", r"{temp_output}")
 with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
     json.dump(result, outf)
 """)
-            elif method_name == 'adaptive_intensity':
+            elif method_name == 'adaptive_intensity':  # Fixed name
                 f.write(f"""
 from adaptive_intensity import adaptive_segment_image
 result = adaptive_segment_image(r"{image_path}", output_dir=r"{temp_output}")
@@ -545,38 +247,14 @@ result = analyze_core(r"{image_path}", r"{temp_output}")
 with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
     json.dump(result, outf)
 """)
-                
-            elif method_name == 'geometric_approach':  # ADD THIS ENTIRE BLOCK
-                f.write(f"""
-from geometric_approach import segment_with_geometric
-result = segment_with_geometric(r"{image_path}", r"{temp_output}")
-with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
-    json.dump(result, outf)
-""")
-                
-            elif method_name == 'unified_detector':
-                f.write(f"""
-            from unified_core_cladding_detector import detect_core_cladding
-            result = detect_core_cladding(r"{image_path}", r"{temp_output}")
-            with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
-                json.dump(result, outf)
-            """)               
         
-        # Run the script in a subprocess with increased timeout for complex methods
-        timeout = 90 if method_name in ['segmentation', 'computational_separation'] else 60
-        
+        # Run the script in a subprocess
         try:
-            # Set environment variables to prevent GUI
-            env = os.environ.copy()
-            env['QT_QPA_PLATFORM'] = 'offscreen'
-            env['MPLBACKEND'] = 'Agg'
-            
             process = subprocess.run(
                 [sys.executable, str(runner_script)],
                 capture_output=True,
                 text=True,
-                timeout=timeout,
-                env=env
+                timeout=60
             )
             
             # Read the result
@@ -604,25 +282,16 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
                 else:
                     result.error = method_result.get('error', 'Unknown error')
             else:
-                # Clean up error messages
-                stderr = process.stderr.strip()
-                # Remove Qt warnings
-                error_lines = []
-                for line in stderr.split('\n'):
-                    if not any(skip in line for skip in ['QObject::', 'qt.qpa', 'Warning:', 'matplotlib']):
-                        error_lines.append(line)
-                
                 error_details = (
-                    "No result file generated.\n"
-                    f"--> Exit Code: {process.returncode}\n"
+                "No result file generated. This usually means the subprocess crashed on import.\n"
+                f"--> Exit Code: {process.returncode}\n"
+                f"--> Stderr: {process.stderr.strip()}\n"
+                f"--> Stdout: {process.stdout.strip()}"
                 )
-                if error_lines:
-                    error_details += f"--> Error: {' '.join(error_lines[:3])}"  # First 3 error lines
-                    
                 result.error = error_details
                 
         except subprocess.TimeoutExpired:
-            result.error = f"Method timed out after {timeout} seconds"
+            result.error = "Method timed out after 60 seconds"
         except Exception as e:
             result.error = str(e)
             
@@ -653,32 +322,117 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         return result
     
     def pixel_voting_consensus(self, results: List[SegmentationResult], image_shape: Tuple[int, int]) -> Dict[str, Any]:
-        """Enhanced consensus using weighted voting with confidence scoring"""
+        """Find consensus using TRUE pixel-by-pixel MAJORITY voting"""
+        valid_results = [r for r in results if r.error is None and r.masks is not None]
         
-        # Create enhanced voting system
-        voting_system = EnhancedVotingSystem(
-            min_agreement_ratio=0.25,  # Lower threshold for more methods
-            use_spatial_coherence=True
-        )
+        if not valid_results:
+            return None
+            
+        print(f"\nPerforming pixel-by-pixel MAJORITY voting with {len(valid_results)} valid results...")
         
-        # Use existing method scores from the system
-        method_scores = self.dataset_stats.get('method_scores', {})
+        h, w = image_shape
         
-        # If no scores exist, use uniform weights
-        if not method_scores:
-            method_scores = {method: 1.0 for method in self.methods}
+        # For each pixel, count votes for each region
+        # Each method gets ONE vote per pixel
+        pixel_votes = np.zeros((h, w, 3), dtype=np.int32)  # 3 regions: core, cladding, ferrule
         
-        # Run enhanced voting
-        consensus = voting_system.weighted_pixel_voting_consensus(
-            results, method_scores, image_shape
-        )
+        # Collect votes from each method
+        for r in valid_results:
+            # For each pixel, the method votes for ONE region
+            core_votes = r.masks['core'] > 0
+            cladding_votes = r.masks['cladding'] > 0
+            ferrule_votes = r.masks['ferrule'] > 0
+            
+            # Add votes (each method gets exactly one vote per pixel)
+            pixel_votes[:, :, 0] += core_votes.astype(np.int32)
+            pixel_votes[:, :, 1] += cladding_votes.astype(np.int32)
+            pixel_votes[:, :, 2] += ferrule_votes.astype(np.int32)
         
-        return consensus
+        # For each pixel, assign it to the region with the MOST votes (majority rules)
+        # Even if only 2 out of 7 methods agree, that's still the majority for that pixel
+        final_core_mask = np.zeros((h, w), dtype=np.uint8)
+        final_cladding_mask = np.zeros((h, w), dtype=np.uint8)
+        final_ferrule_mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # Find which region has the most votes for each pixel
+        winning_region = np.argmax(pixel_votes, axis=2)
+        
+        # Assign pixels based on majority vote
+        final_core_mask[winning_region == 0] = 1
+        final_cladding_mask[winning_region == 1] = 1
+        final_ferrule_mask[winning_region == 2] = 1
+        
+        # Handle ties (if votes are equal)
+        # Check for ties between regions
+        max_votes = np.max(pixel_votes, axis=2)
+        
+        # Count how many regions have the max vote count for each pixel
+        tie_count = np.sum(pixel_votes == max_votes[:, :, np.newaxis], axis=2)
+        tie_pixels = tie_count > 1
+        
+        if np.any(tie_pixels):
+            print(f"  Found {np.sum(tie_pixels)} pixels with tied votes")
+            # For ties, prefer: core > cladding > ferrule
+            tie_coords = np.where(tie_pixels)
+            for i in range(len(tie_coords[0])):
+                y, x = tie_coords[0][i], tie_coords[1][i]
+                votes = pixel_votes[y, x]
+                max_vote = np.max(votes)
+                
+                # Clear current assignments
+                final_core_mask[y, x] = 0
+                final_cladding_mask[y, x] = 0
+                final_ferrule_mask[y, x] = 0
+                
+                # Assign based on preference
+                if votes[0] == max_vote:  # Core
+                    final_core_mask[y, x] = 1
+                elif votes[1] == max_vote:  # Cladding
+                    final_cladding_mask[y, x] = 1
+                else:  # Ferrule
+                    final_ferrule_mask[y, x] = 1
+        
+        # Calculate consensus metrics
+        total_pixels = h * w
+        consensus_strength = {
+            'core': np.sum(pixel_votes[:, :, 0]) / (total_pixels * len(valid_results)),
+            'cladding': np.sum(pixel_votes[:, :, 1]) / (total_pixels * len(valid_results)),
+            'ferrule': np.sum(pixel_votes[:, :, 2]) / (total_pixels * len(valid_results))
+        }
+        
+        # Calculate agreement statistics
+        agreement_stats = {
+            'unanimous_pixels': np.sum(max_votes == len(valid_results)),
+            'majority_pixels': np.sum(max_votes > len(valid_results) / 2),
+            'minority_pixels': np.sum(max_votes <= len(valid_results) / 2),
+            'min_agreement': 2  # Even 2 methods agreeing is valid
+        }
+        
+        print(f"  Unanimous agreement: {agreement_stats['unanimous_pixels']} pixels")
+        print(f"  Majority agreement: {agreement_stats['majority_pixels']} pixels")
+        print(f"  Minority agreement: {agreement_stats['minority_pixels']} pixels")
+        
+        # Find which methods contributed most to the consensus
+        contributing_methods = [r.method_name for r in valid_results]
+        
+        return {
+            'masks': {
+                'core': final_core_mask,
+                'cladding': final_cladding_mask,
+                'ferrule': final_ferrule_mask
+            },
+            'consensus_strength': consensus_strength,
+            'contributing_methods': contributing_methods,
+            'num_valid_results': len(valid_results),
+            'agreement_stats': agreement_stats,
+            'vote_counts': pixel_votes,  # Keep vote counts for visualization
+            'all_results': [r.to_dict() for r in results]
+        }
     
     def save_results(self, image_path: Path, consensus: Dict[str, Any], image: np.ndarray, output_dir: str) -> List[str]:
         """Save consensus results and return paths of saved regions."""
-        result_dir = Path(output_dir)
-        result_dir.mkdir(exist_ok=True)
+        result_dir = Path(output_dir) # Use the passed output directory
+        result_dir.mkdir(exist_ok=True) # Ensure it exists
         
         # Extract masks
         core_mask = consensus['masks']['core']
@@ -688,8 +442,7 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         # Save consensus data (without the large mask arrays)
         consensus_save = consensus.copy()
         consensus_save.pop('masks', None)
-        consensus_save.pop('weighted_votes', None)
-        consensus_save.pop('confidence_map', None)
+        consensus_save.pop('vote_counts', None)
         with open(result_dir / "consensus.json", 'w') as f:
             json.dump(consensus_save, f, indent=4, cls=NumpyEncoder)
         
@@ -698,15 +451,11 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         np.save(result_dir / "cladding_mask.npy", cladding_mask)
         np.save(result_dir / "ferrule_mask.npy", ferrule_mask)
         
-        # Save confidence map
-        if 'confidence_map' in consensus:
-            np.save(result_dir / "confidence_map.npy", consensus['confidence_map'])
-        
         # Create visualization of voting results
         self.create_voting_visualization(result_dir, core_mask, cladding_mask, ferrule_mask, 
-                                       image, consensus)
+                                       image, consensus.get('vote_counts'))
         
-        # Extract regions using masks
+        # Extract regions using masks (NO BINARY FILTERING)
         region_core = cv2.bitwise_and(image, image, mask=(core_mask * 255).astype(np.uint8))
         region_cladding = cv2.bitwise_and(image, image, mask=(cladding_mask * 255).astype(np.uint8))
         region_ferrule = cv2.bitwise_and(image, image, mask=(ferrule_mask * 255).astype(np.uint8))
@@ -718,16 +467,16 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         
         print(f"\n✓ Results saved to: {result_dir}")
         saved_region_paths = [
-            str(result_dir / "region_core.png"),
-            str(result_dir / "region_cladding.png"),
-            str(result_dir / "region_ferrule.png")
+        str(result_dir / "region_core.png"),
+        str(result_dir / "region_cladding.png"),
+        str(result_dir / "region_ferrule.png")
         ]
         return saved_region_paths
     
     def create_voting_visualization(self, result_dir: Path, core_mask: np.ndarray, 
                                    cladding_mask: np.ndarray, ferrule_mask: np.ndarray, 
-                                   original_image: np.ndarray, consensus_data: Optional[Dict] = None):
-        """Create visualization of the voting results with confidence map"""
+                                   original_image: np.ndarray, vote_counts: Optional[np.ndarray] = None):
+        """Create visualization of the voting results"""
         # Create color-coded mask visualization
         h, w = core_mask.shape
         mask_viz = np.zeros((h, w, 3), dtype=np.uint8)
@@ -748,106 +497,56 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         cv2.imwrite(str(result_dir / "voting_mask_visualization.png"), mask_viz)
         cv2.imwrite(str(result_dir / "voting_overlay.png"), overlay)
         
-        # Save confidence map if available
-        if consensus_data and 'confidence_map' in consensus_data:
-            confidence_map = consensus_data['confidence_map']
-            # Convert to uint8 for visualization (0-255)
-            confidence_viz = (confidence_map * 255).astype(np.uint8)
-            confidence_colored = cv2.applyColorMap(confidence_viz, cv2.COLORMAP_JET)
-            cv2.imwrite(str(result_dir / "voting_confidence_map.png"), confidence_colored)
-        
-        # If we have weighted votes, create enhanced visualization
-        if consensus_data and 'weighted_votes' in consensus_data and HAS_MATPLOTLIB:
-            weighted_votes = consensus_data['weighted_votes']
-            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-            fig.suptitle('Enhanced Weighted Voting Results', fontsize=16)
+        # If we have vote counts, create a vote strength visualization
+        if vote_counts is not None and HAS_MATPLOTLIB:
+            fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+            fig.suptitle('Pixel-by-Pixel Voting Results', fontsize=16)
             
-            # Show weighted votes for each region
-            im0 = axes[0, 0].imshow(weighted_votes[:, :, 0], cmap='Reds')
-            axes[0, 0].set_title('Core Weighted Votes')
+            # Show vote counts for each region
+            im0 = axes[0, 0].imshow(vote_counts[:, :, 0], cmap='Reds', vmin=0, vmax=vote_counts.max())
+            axes[0, 0].set_title('Core Votes')
             plt.colorbar(im0, ax=axes[0, 0])
             
-            im1 = axes[0, 1].imshow(weighted_votes[:, :, 1], cmap='Greens')
-            axes[0, 1].set_title('Cladding Weighted Votes')
+            im1 = axes[0, 1].imshow(vote_counts[:, :, 1], cmap='Greens', vmin=0, vmax=vote_counts.max())
+            axes[0, 1].set_title('Cladding Votes')
             plt.colorbar(im1, ax=axes[0, 1])
             
-            im2 = axes[0, 2].imshow(weighted_votes[:, :, 2], cmap='Blues')
-            axes[0, 2].set_title('Ferrule Weighted Votes')
-            plt.colorbar(im2, ax=axes[0, 2])
-            
-            # Show confidence map
-            if 'confidence_map' in consensus_data:
-                im3 = axes[1, 0].imshow(consensus_data['confidence_map'], cmap='viridis', vmin=0, vmax=1)
-                axes[1, 0].set_title('Voting Confidence Map')
-                plt.colorbar(im3, ax=axes[1, 0])
+            im2 = axes[1, 0].imshow(vote_counts[:, :, 2], cmap='Blues', vmin=0, vmax=vote_counts.max())
+            axes[1, 0].set_title('Ferrule Votes')
+            plt.colorbar(im2, ax=axes[1, 0])
             
             # Show final result
             axes[1, 1].imshow(mask_viz)
-            axes[1, 1].set_title('Final Segmentation')
+            axes[1, 1].set_title('Final Segmentation (Majority Vote)')
             
-            # Show agreement statistics
-            axes[1, 2].axis('off')
-            if 'agreement_stats' in consensus_data:
-                stats = consensus_data['agreement_stats']
-                stats_text = f"Agreement Statistics:\n"
-                stats_text += f"High confidence: {stats['high_confidence_pixels']:,} px\n"
-                stats_text += f"Medium confidence: {stats['medium_confidence_pixels']:,} px\n"
-                stats_text += f"Low confidence: {stats['low_confidence_pixels']:,} px\n"
-                stats_text += f"Mean confidence: {stats['mean_confidence']:.3f}\n"
-                stats_text += f"Uncertain resolved: {stats['uncertain_pixels_resolved']:,} px"
-                axes[1, 2].text(0.1, 0.5, stats_text, transform=axes[1, 2].transAxes, 
-                               fontsize=10, verticalalignment='center')
-            
-            for ax in axes.flat[:5]:
+            for ax in axes.flat:
                 ax.axis('off')
                 
             plt.tight_layout()
-            plt.savefig(str(result_dir / "enhanced_voting_analysis.png"), dpi=150)
+            plt.savefig(str(result_dir / "voting_analysis.png"), dpi=150)
             plt.close()
         
-        print("  ✓ Created enhanced voting visualization")
+        print("  ✓ Created voting visualization")
     
     def update_learning(self, consensus: Dict[str, Any], image_shape: Tuple[int, int]):
-        """Update learning parameters based on consensus results and agreement scores"""
+        """Update learning parameters based on consensus results"""
         if not consensus:
             return
             
-        # Update method scores based on agreement with consensus
-        if 'method_agreement_scores' in consensus:
-            for method, scores in consensus['method_agreement_scores'].items():
+        # Update method scores based on participation
+        for method in self.methods:
+            if method in consensus['contributing_methods']:
+                # Increase score for contributing methods
                 current_score = self.dataset_stats['method_scores'].get(method, 1.0)
+                self.dataset_stats['method_scores'][method] = min(current_score * 1.05, 2.0)
+            else:
+                # Slightly decrease score for non-contributing methods
+                current_score = self.dataset_stats['method_scores'].get(method, 1.0)
+                self.dataset_stats['method_scores'][method] = max(current_score * 0.95, 0.1)
                 
-                # Adjust score based on agreement
-                agreement = scores['raw_agreement']
-                if agreement > 0.8:  # High agreement
-                    new_score = current_score * 1.1
-                elif agreement > 0.6:  # Good agreement
-                    new_score = current_score * 1.05
-                elif agreement < 0.4:  # Poor agreement
-                    new_score = current_score * 0.9
-                else:  # Moderate agreement
-                    new_score = current_score  # No change
-                
-                # Clamp between 0.1 and 2.0
-                self.dataset_stats['method_scores'][method] = max(0.1, min(2.0, new_score))
-        else:
-            # Fallback to old method if agreement scores not available
-            for method in self.methods:
-                if method in consensus['contributing_methods']:
-                    current_score = self.dataset_stats['method_scores'].get(method, 1.0)
-                    self.dataset_stats['method_scores'][method] = min(current_score * 1.05, 2.0)
-                else:
-                    current_score = self.dataset_stats['method_scores'].get(method, 1.0)
-                    self.dataset_stats['method_scores'][method] = max(current_score * 0.95, 0.1)
-        
         # Update method scores in memory
         for method in self.methods:
             self.methods[method]['score'] = self.dataset_stats['method_scores'].get(method, 1.0)
-        
-        # Track accuracy if available
-        if 'method_agreement_scores' in consensus:
-            for method, scores in consensus['method_agreement_scores'].items():
-                self.dataset_stats['method_accuracy'][method] = scores['raw_agreement']
     
     def process_image(self, image_path: Path, output_dir: str) -> Dict[str, Any]:
         """Process a single image through all methods"""
@@ -872,22 +571,17 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
             if result.error is None:
                 print(f"  ✓ Success - Center: {result.center}, Core: {result.core_radius}, Cladding: {result.cladding_radius}")
             else:
-                # Print cleaned error message
-                error_msg = result.error.split('\n')[0]  # First line only
-                print(f"  ✗ Failed: {error_msg}")
+                print(f"  ✗ Failed: {result.error}")
         
-        # Find consensus using enhanced voting
+        # Find consensus using pixel voting
         consensus = self.pixel_voting_consensus(results, image_shape)
         
         if consensus:
-            print(f"\n✓ Enhanced voting consensus achieved:")
+            print(f"\n✓ Pixel voting consensus achieved:")
             print(f"  Contributing methods: {', '.join(consensus['contributing_methods'])}")
             print(f"  Consensus strength - Core: {consensus['consensus_strength']['core']:.2f}, "
                   f"Cladding: {consensus['consensus_strength']['cladding']:.2f}, "
                   f"Ferrule: {consensus['consensus_strength']['ferrule']:.2f}")
-            
-            if 'agreement_stats' in consensus:
-                print(f"  Mean confidence: {consensus['agreement_stats']['mean_confidence']:.3f}")
             
             # Update learning
             self.update_learning(consensus, image_shape)
@@ -963,11 +657,7 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
             # Print current method scores
             print("\nCurrent Method Scores:")
             for method, info in sorted(self.methods.items(), key=lambda x: x[1]['score'], reverse=True):
-                accuracy = self.dataset_stats['method_accuracy'].get(method, 'N/A')
-                if isinstance(accuracy, float):
-                    print(f"  {method}: Score={info['score']:.3f}, Accuracy={accuracy:.3f}")
-                else:
-                    print(f"  {method}: Score={info['score']:.3f}, Accuracy={accuracy}")
+                print(f"  {method}: {info['score']:.3f}")
                 
             # Check if we should continue
             if max_runs > 0 and run_count >= max_runs:
@@ -1036,7 +726,7 @@ with open(r"{temp_output / 'method_result.json'}", 'w') as outf:
         """Main execution flow"""
         print("\n" + "="*80)
         print("UNIFIED FIBER OPTIC SEGMENTATION SYSTEM".center(80))
-        print("Enhanced Weighted Voting Edition".center(80))
+        print("True Pixel-by-Pixel Majority Voting Edition".center(80))
         print("="*80)
         
         # Check if methods directory exists

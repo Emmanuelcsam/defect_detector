@@ -1,8 +1,10 @@
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend - MUST BE BEFORE pyplot import
+import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 import os
 import json
-import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 from skimage.feature import canny
 
@@ -20,13 +22,19 @@ def get_edge_points(image, sigma=1.5, low_threshold=0.1, high_threshold=0.3):
     points = np.argwhere(edges).astype(float) # argwhere returns (row, col) which is (y, x)
     return points[:, ::-1] # Return as (x, y)
 
-def generate_hypotheses_ransac(points, num_iterations=2000, inlier_threshold=1.5):
+def generate_hypotheses_ransac(points, num_iterations=2000, inlier_threshold=1.5, image_shape=None):
     """
     Generates a highly robust initial guess for the center and radii using a custom
     RANSAC and Radial Histogram Voting scheme with improved parameters for low-contrast images.
     """
     best_score = -1
     best_params = None
+    
+    # Use image shape to constrain search if provided
+    max_radius = 500  # Default max radius
+    if image_shape is not None:
+        h, w = image_shape
+        max_radius = min(h, w) * 0.45  # Maximum 45% of image size
 
     for i in range(num_iterations):
         # 1. Hypothesize: Randomly sample 3 points and find the circumcenter
@@ -44,8 +52,12 @@ def generate_hypotheses_ransac(points, num_iterations=2000, inlier_threshold=1.5
         uy = ((p1[0]**2 + p1[1]**2) * (p3[0] - p2[0]) + (p2[0]**2 + p2[1]**2) * (p1[0] - p3[0]) + (p3[0]**2 + p3[1]**2) * (p2[0] - p1[0])) / D
         
         # Validate center is within reasonable bounds
-        if ux < 0 or uy < 0 or ux > 10000 or uy > 10000:
-            continue
+        if image_shape is not None:
+            if ux < 0 or uy < 0 or ux > w or uy > h:
+                continue
+        else:
+            if ux < 0 or uy < 0 or ux > 10000 or uy > 10000:
+                continue
             
         center_hypothesis = np.array([ux, uy])
 
@@ -53,12 +65,12 @@ def generate_hypotheses_ransac(points, num_iterations=2000, inlier_threshold=1.5
         distances = np.linalg.norm(points - center_hypothesis, axis=1)
         
         # Filter out unreasonable distances
-        reasonable_distances = distances[distances < 1000]
+        reasonable_distances = distances[distances < max_radius]
         if len(reasonable_distances) < 10:
             continue
             
         # Create a histogram of distances (radii)
-        hist, bin_edges = np.histogram(reasonable_distances, bins=50, range=(0, 500))
+        hist, bin_edges = np.histogram(reasonable_distances, bins=50, range=(0, max_radius))
         
         # Find the two largest peaks in the histogram
         peak_indices = np.argsort(hist)[-2:] # Get indices of the two highest bins
@@ -72,12 +84,12 @@ def generate_hypotheses_ransac(points, num_iterations=2000, inlier_threshold=1.5
             r2_guess = bin_edges[peak_indices[1]] + (bin_edges[1] - bin_edges[0])/2
             
             # Ensure radii are reasonable
-            if r1_guess < 500 and r2_guess < 500:
+            if r1_guess < max_radius and r2_guess < max_radius:
                 best_params = [ux, uy, min(r1_guess, r2_guess), max(r1_guess, r2_guess)]
 
     return best_params
 
-def refine_fit_least_squares(points, initial_params):
+def refine_fit_least_squares(points, initial_params, image_shape):
     """
     Performs the ultimate refinement using Non-Linear Least Squares to minimize
     the true geometric distance of edge points to the two-circle model.
@@ -95,27 +107,45 @@ def refine_fit_least_squares(points, initial_params):
         
         return np.minimum(res1, res2)
 
-    # Set reasonable bounds for parameters
-    max_coord = np.max(points) * 1.5
+    # Set reasonable bounds for parameters based on image size
+    h, w = image_shape
+    max_coord = max(h, w)
+    max_radius = min(h, w) * 0.45  # Maximum 45% of smallest dimension
+    
     bounds = (
         [0, 0, 5, 10],  # Lower bounds: cx, cy, r1, r2
-        [max_coord, max_coord, max_coord/2, max_coord/2]  # Upper bounds
+        [w, h, max_radius, max_radius]  # Upper bounds
     )
     
     # Use scipy's Levenberg-Marquardt implementation with bounds
     try:
         result = least_squares(residuals, initial_params, args=(points,), 
-                             method='trf', bounds=bounds)
+                             method='trf', bounds=bounds, max_nfev=1000)
         
         # Validate the result
         cx, cy, r1, r2 = result.x
-        if cx > 0 and cy > 0 and r1 > 0 and r2 > 0 and r1 < 1000 and r2 < 1000:
-            return result.x
-        else:
-            # Return initial params if optimization went wrong
-            return initial_params
-    except:
-        return initial_params
+        if cx > 0 and cy > 0 and r1 > 0 and r2 > 0 and cx < w and cy < h:
+            # Additional validation: ensure radii are reasonable
+            if r1 <= max_radius and r2 <= max_radius:
+                return result.x
+        
+        # If validation fails, return constrained version of initial params
+        cx, cy, r1, r2 = initial_params
+        cx = np.clip(cx, 0, w)
+        cy = np.clip(cy, 0, h)
+        r1 = np.clip(r1, 5, max_radius)
+        r2 = np.clip(r2, 10, max_radius)
+        return [cx, cy, r1, r2]
+        
+    except Exception as e:
+        print(f"Optimization failed: {e}")
+        # Return constrained initial params
+        cx, cy, r1, r2 = initial_params
+        cx = np.clip(cx, 0, w)
+        cy = np.clip(cy, 0, h)
+        r1 = np.clip(r1, 5, max_radius)
+        r2 = np.clip(r2, 10, max_radius)
+        return [cx, cy, r1, r2]
 
 def create_final_masks(image_shape, params):
     """Creates final masks using the ultra-precise parameters."""
@@ -141,6 +171,9 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
     Main processing function modified for unified system with enhanced contrast
     Returns standardized results
     """
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+    
     # Initialize result dictionary
     result = {
         'method': 'computational_separation',
@@ -158,9 +191,6 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
             json.dump(result, f, indent=4)
         return result
         
-    if not os.path.exists(output_dir): 
-        os.makedirs(output_dir)
-
     original_image = cv2.imread(image_path)
     if original_image is None:
         result['error'] = f"Could not read image from '{image_path}'"
@@ -178,6 +208,9 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
     base_filename = os.path.splitext(os.path.basename(image_path))[0]
     
     try:
+        h, w = gray_image.shape
+        image_shape = (h, w)
+        
         # STAGE 1: Extract unbiased geometric features
         edge_points = get_edge_points(gray_image, sigma=1.5)
         
@@ -188,28 +221,43 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
             return result
         
         # STAGE 2: Generate robust hypothesis with enhanced RANSAC
-        initial_guess = generate_hypotheses_ransac(edge_points)
+        initial_guess = generate_hypotheses_ransac(edge_points, image_shape=image_shape)
         if initial_guess is None: 
-            result['error'] = "RANSAC failed to find a suitable hypothesis"
-            with open(os.path.join(output_dir, f'{base_filename}_computational_result.json'), 'w') as f:
-                json.dump(result, f, indent=4)
-            return result
+            # Try with more relaxed parameters
+            edge_points_relaxed = get_edge_points(gray_image, sigma=2.0, low_threshold=0.05, high_threshold=0.2)
+            initial_guess = generate_hypotheses_ransac(edge_points_relaxed, num_iterations=3000, image_shape=image_shape)
+            
+            if initial_guess is None:
+                result['error'] = "RANSAC failed to find a suitable hypothesis"
+                with open(os.path.join(output_dir, f'{base_filename}_computational_result.json'), 'w') as f:
+                    json.dump(result, f, indent=4)
+                return result
 
         # STAGE 3: Perform ultimate refinement with Non-Linear Least Squares
-        final_params = refine_fit_least_squares(edge_points, initial_guess)
+        final_params = refine_fit_least_squares(edge_points, initial_guess, image_shape)
         cx, cy, r1, r2 = final_params
         r_core, r_cladding = min(r1, r2), max(r1, r2)
         
-        # Validate the results are within image bounds
-        h, w = gray_image.shape
-        if not (0 < cx < w and 0 < cy < h):
-            result['error'] = f"Center ({cx}, {cy}) is outside image bounds ({w}, {h})"
-            with open(os.path.join(output_dir, f'{base_filename}_computational_result.json'), 'w') as f:
-                json.dump(result, f, indent=4)
-            return result
+        # Final validation with more reasonable constraints
+        max_allowed_radius = min(w, h) * 0.45  # Maximum 45% of smallest dimension
+        
+        if r_cladding > max_allowed_radius:
+            # Scale down proportionally
+            scale_factor = max_allowed_radius / r_cladding
+            r_cladding = max_allowed_radius
+            r_core = r_core * scale_factor
+            print(f"Warning: Scaled down radii by factor {scale_factor:.2f}")
+        
+        # Ensure minimum radius constraints
+        if r_core < 5:
+            r_core = 5
+        if r_cladding < r_core + 10:
+            r_cladding = r_core + 10
             
-        if r_cladding > min(w, h) / 2:
-            result['error'] = f"Cladding radius {r_cladding} is too large for image size"
+        # Validate center is well within bounds
+        margin = 5
+        if not (margin < cx < w - margin and margin < cy < h - margin):
+            result['error'] = f"Center ({cx:.1f}, {cy:.1f}) is too close to image bounds"
             with open(os.path.join(output_dir, f'{base_filename}_computational_result.json'), 'w') as f:
                 json.dump(result, f, indent=4)
             return result
@@ -249,9 +297,16 @@ def process_fiber_image_veridian(image_path, output_dir='output_veridian'):
         circle2 = plt.Circle((cx, cy), r_cladding, color='cyan', fill=False, linewidth=2, label='Cladding')
         plt.gca().add_artist(circle1)
         plt.gca().add_artist(circle2)
-        plt.scatter(edge_points[:, 0], edge_points[:, 1], s=1, c='red', alpha=0.3, label='Edge Points')
+        # Subsample edge points for visualization
+        if len(edge_points) > 1000:
+            indices = np.random.choice(len(edge_points), 1000, replace=False)
+            edge_points_vis = edge_points[indices]
+        else:
+            edge_points_vis = edge_points
+        plt.scatter(edge_points_vis[:, 0], edge_points_vis[:, 1], s=1, c='red', alpha=0.3, label='Edge Points')
         plt.title(f'Computational Geometric Fit (Enhanced)')
         plt.legend()
+        plt.axis('equal')
         plt.savefig(os.path.join(output_dir, f"{base_filename}_computational_fit.png"))
         plt.close()
 
