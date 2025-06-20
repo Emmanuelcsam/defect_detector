@@ -389,7 +389,6 @@ class UnifiedSegmentationSystem:
     
     def load_methods(self):
         """Dynamically load all segmentation methods"""
-        # Fixed mapping of file names to method names
         method_files = [
             ('guess_approach.py', 'guess_approach'),
             ('hough_separation.py', 'hough_separation'),
@@ -398,9 +397,9 @@ class UnifiedSegmentationSystem:
             ('adaptive_intensity.py', 'adaptive_intensity'),
             ('computational_separation.py', 'computational_separation'),
             ('gradient_approach.py', 'gradient_approach'),
-            ('bright_core_extractor.py', 'bright_core_extractor')
-            ('geometric_approach.py', 'geometric_approach') 
-            ('unified_core_cladding_detector.py', 'unified_detector')         
+            ('bright_core_extractor.py', 'bright_core_extractor'),
+            ('geometric_approach.py', 'geometric_approach'),
+            ('unified_core_cladding_detector.py', 'unified_detector'),
         ]
         
         for method_file, method_name in method_files:

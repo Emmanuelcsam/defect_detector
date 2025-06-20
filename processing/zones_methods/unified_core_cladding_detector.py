@@ -870,55 +870,64 @@ class UnifiedCoreCladingDetector:
 
 def detect_core_cladding(image_path: str, output_dir: str = None) -> Dict[str, Any]:
     """
-    Main entry point for unified core/cladding detection
-    
-    Args:
-        image_path: Path to the fiber optic image
-        output_dir: Optional output directory for saving results
-        
-    Returns:
-        Dictionary with detection results
+    Main entry point for unified core/cladding detection.
+    MODIFIED to always write a result file for the orchestrator.
     """
-    # Create detector with default config
     config = DetectorConfig()
     detector = UnifiedCoreCladingDetector(config)
-    
-    # Run detection
-    result = detector.detect(image_path)
-    
-    # Save result if output directory specified
-    if output_dir and result['success']:
+    result = None
+    output_path = None
+
+    # Ensure output_dir is a Path object if provided
+    if output_dir:
         os.makedirs(output_dir, exist_ok=True)
         base_name = os.path.splitext(os.path.basename(image_path))[0]
+        output_path = os.path.join(output_dir, f'{base_name}_unified_result.json')
+
+    try:
+        # Run detection
+        result = detector.detect(image_path)
         
-        # Save JSON result
-        with open(os.path.join(output_dir, f'{base_name}_unified_result.json'), 'w') as f:
-            json.dump(result, f, indent=4)
-            
-        # Create and save visualization
-        try:
-            img = cv2.imread(image_path)
-            if img is not None:
-                # Draw detection results
-                cx, cy = int(result['center'][0]), int(result['center'][1])
-                core_r = int(result['core_radius'])
-                clad_r = int(result['cladding_radius'])
-                
-                # Draw circles
-                cv2.circle(img, (cx, cy), core_r, (0, 255, 0), 2)  # Green for core
-                cv2.circle(img, (cx, cy), clad_r, (0, 0, 255), 2)  # Red for cladding
-                cv2.circle(img, (cx, cy), 3, (255, 255, 0), -1)    # Yellow center
-                
-                # Add text
-                text = f"Confidence: {result['confidence']:.2f}"
-                cv2.putText(img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                           0.8, (255, 255, 255), 2, cv2.LINE_AA)
-                
-                # Save annotated image
-                cv2.imwrite(os.path.join(output_dir, f'{base_name}_unified_annotated.png'), img)
-                
-        except Exception as e:
-            logging.warning(f"Failed to create visualization: {str(e)}")
+        # Create and save visualization on success
+        if output_dir and result and result.get('success'):
+            try:
+                img = cv2.imread(image_path)
+                if img is not None:
+                    # Draw detection results
+                    cx, cy = int(result['center'][0]), int(result['center'][1])
+                    core_r = int(result['core_radius'])
+                    clad_r = int(result['cladding_radius'])
+                    
+                    # Draw circles
+                    cv2.circle(img, (cx, cy), core_r, (0, 255, 0), 2)
+                    cv2.circle(img, (cx, cy), clad_r, (0, 0, 255), 2)
+                    cv2.circle(img, (cx, cy), 3, (255, 255, 0), -1)
+                    
+                    # Add text
+                    text = f"Confidence: {result['confidence']:.2f}"
+                    cv2.putText(img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                               0.8, (255, 255, 255), 2, cv2.LINE_AA)
+                    
+                    # Save annotated image
+                    annotated_path = os.path.join(output_dir, f'{base_name}_unified_annotated.png')
+                    cv2.imwrite(annotated_path, img)
+            except Exception as e:
+                logging.warning(f"Failed to create visualization: {str(e)}")
+
+    except Exception as e:
+        # If the whole process fails, create a failure result
+        result = {
+            'success': False,
+            'method': 'unified_core_cladding_detector',
+            'image_path': image_path,
+            'error': f"Critical error during detection: {str(e)}",
+            'center': None, 'core_radius': None, 'cladding_radius': None, 'confidence': 0.0
+        }
+    finally:
+        # ALWAYS write the result to a JSON file if an output path is defined
+        if output_path and result is not None:
+            with open(output_path, 'w') as f:
+                json.dump(result, f, indent=4)
     
     return result
 
