@@ -4,17 +4,38 @@
     "zones_methods_dir": "./zones_methods",
     "detection_knowledge_base": "./processing/detection_kb.json"
   },
+  
   "process_settings": {
-    "output_folder_name": "1_reimagined"
+    "output_folder_name": "1_reimagined",
+    "num_variations": 5,
+    "variation_params": {
+      "brightness_range": [-20, 20],
+      "contrast_range": [0.8, 1.2],
+      "blur_range": [0, 2],
+      "noise_level": [0, 0.02]
+    }
   },
+  
   "separation_settings": {
-    "output_folder_name": "2_separated"
+    "output_folder_name": "2_separated",
+    "min_agreement_ratio": 0.3,
+    "consensus_method": "model_driven",
+    "vulnerable_methods": [
+      "adaptive_intensity",
+      "gradient_approach",
+      "guess_approach",
+      "threshold_separation",
+      "intelligent_segmenter"
+    ]
   },
+  
   "detection_settings": {
     "output_folder_name": "3_detected",
     "config": {
       "min_defect_area_px": 5,
       "max_defect_area_px": 10000,
+      "min_defect_size": 10,
+      "max_defect_size": 5000,
       "pixels_per_micron": 1.0,
       "output_dpi": 200,
       "save_intermediate_masks": false,
@@ -24,6 +45,7 @@
       "use_global_anomaly_analysis": true,
       "anomaly_mahalanobis_threshold": 5.0,
       "anomaly_ssim_threshold": 0.85,
+      "anomaly_threshold_multiplier": 2.5,
       "use_topological_analysis": false,
       "use_anisotropic_diffusion": true,
       "use_coherence_enhancing_diffusion": true,
@@ -39,7 +61,29 @@
       "use_geometric_fp_reduction": true,
       "use_contrast_fp_reduction": true,
       "min_scratch_aspect_ratio": 3.0,
-      "min_defect_contrast": 10.0
+      "min_defect_contrast": 10.0,
+      "severity_thresholds": {
+        "CRITICAL": 0.9,
+        "HIGH": 0.7,
+        "MEDIUM": 0.5,
+        "LOW": 0.3,
+        "NEGLIGIBLE": 0.1
+      },
+      "confidence_threshold": 0.3,
+      "enable_visualization": true
+    }
+  },
+  
+  "data_acquisition_settings": {
+    "clustering_eps": 30.0,
+    "min_cluster_size": 1,
+    "archive_previous_results": true,
+    "generate_visualizations": true,
+    "output_formats": ["json", "txt", "png"],
+    "quality_thresholds": {
+      "pass_quality_score": 70,
+      "max_critical_defects": 0,
+      "max_high_defects": 2
     }
   }
 }

@@ -1,6 +1,7 @@
-*.json
-*.npy
+
+*.png
 *.pyc
 *.jpg
-*.png
-*.npy
+*.json
+*.pyc
+*.pyc

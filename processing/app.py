@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 
 # --- Add script directories to Python path ---
-# This ensures that we can import our custom modules (process, separation, detection)
+# This ensures that we can import our custom modules (process, separation, detection, data_acquisition)
 # as long as they are in the same directory as this script.
 current_dir = Path(__file__).parent.resolve()
 if str(current_dir) not in sys.path:
@@ -31,17 +31,18 @@ try:
     from process import reimagine_image
     from separation import UnifiedSegmentationSystem
     from detection import OmniFiberAnalyzer, OmniConfig
-    logging.info("Successfully imported custom processing & analysis modules.")
+    from data_acquisition import integrate_with_pipeline as run_data_acquisition
+    logging.info("Successfully imported all processing & analysis modules including data acquisition.")
 except ImportError as e:
     logging.error(f"Fatal Error: Failed to import a required module: {e}")
-    logging.error("Please ensure process.py, separation.py, and detection.py are in the same directory as app.py.")
+    logging.error("Please ensure process.py, separation.py, detection.py, and data_acquisition.py are in the same directory as app.py.")
     sys.exit(1)
 
 
 class PipelineOrchestrator:
     """
     This class manages the entire multi-stage defect analysis pipeline.
-    It controls the flow from processing to separation to detection.
+    It controls the flow from processing to separation to detection to final data acquisition.
     """
     def __init__(self, config_path):
         """Initializes the orchestrator with configuration."""
@@ -99,8 +100,20 @@ class PipelineOrchestrator:
         # === STAGE 3: DETECTION (ANALYSIS) ===
         self.run_detection_stage(all_images_to_detect, run_dir)
 
+        # === STAGE 4: DATA ACQUISITION (FINAL ANALYSIS) ===
+        final_report = self.run_data_acquisition_stage(input_image_path, run_dir)
+
         end_time = time.time()
         logging.info(f"--- Pipeline for {input_image_path.name} completed in {end_time - start_time:.2f} seconds ---")
+        
+        # Log final summary
+        if final_report and 'analysis_summary' in final_report:
+            summary = final_report['analysis_summary']
+            logging.info(f"FINAL RESULTS: Status={summary['pass_fail_status']}, "
+                        f"Quality Score={summary['quality_score']}/100, "
+                        f"Total Defects={summary['total_merged_defects']}")
+        
+        return final_report
 
     def run_processing_stage(self, input_image_path, run_dir):
         """Runs the process.py script to generate multiple image versions."""
@@ -168,14 +181,29 @@ class PipelineOrchestrator:
 
         try:
             # Create the config object for the detector from our main config file
-            omni_config_dict = detection_cfg['config'].copy()
+            detection_config = detection_cfg['config'].copy()
             
             # Handle the knowledge base path
             kb_path = self.config['paths'].get('detection_knowledge_base')
             if kb_path:
-                omni_config_dict['knowledge_base_path'] = kb_path
+                detection_config['knowledge_base_path'] = kb_path
             
-            # Pass the dictionary to the OmniConfig dataclass to create an instance
+            # Map parameters to OmniConfig expected names
+            # Handle parameters that might have different names
+            omni_config_dict = {
+                'knowledge_base_path': detection_config.get('knowledge_base_path'),
+                'min_defect_size': detection_config.get('min_defect_size', 
+                                                       detection_config.get('min_defect_area_px', 10)),
+                'max_defect_size': detection_config.get('max_defect_size', 
+                                                       detection_config.get('max_defect_area_px', 5000)),
+                'severity_thresholds': detection_config.get('severity_thresholds'),
+                'confidence_threshold': detection_config.get('confidence_threshold', 0.3),
+                'anomaly_threshold_multiplier': detection_config.get('anomaly_threshold_multiplier', 2.5),
+                'enable_visualization': detection_config.get('enable_visualization', 
+                                                            detection_config.get('generate_json_report', True))
+            }
+            
+            # Pass the mapped dictionary to the OmniConfig dataclass
             omni_config = OmniConfig(**omni_config_dict)
 
             # Initialize the analyzer once with the full configuration
@@ -194,6 +222,53 @@ class PipelineOrchestrator:
             logging.error(f"A critical error occurred in the detection stage: {e}", exc_info=True)
         
         logging.info("Detection stage complete.")
+
+    def run_data_acquisition_stage(self, original_image_path, run_dir):
+        """Runs data_acquisition.py to aggregate and analyze all detection results."""
+        logging.info(">>> STAGE 4: DATA ACQUISITION - Aggregating and analyzing all results...")
+        
+        try:
+            # Get clustering parameters from config if available
+            data_acq_cfg = self.config.get('data_acquisition_settings', {})
+            clustering_eps = data_acq_cfg.get('clustering_eps', 30.0)
+            
+            # Run data acquisition analysis
+            final_report = run_data_acquisition(
+                str(run_dir), 
+                original_image_path.stem,
+                clustering_eps=clustering_eps
+            )
+            
+            if final_report:
+                # Log summary of final results
+                summary = final_report.get('analysis_summary', {})
+                logging.info(f"Data acquisition complete. Final status: {summary.get('pass_fail_status', 'UNKNOWN')}")
+                
+                # Create a summary file in the root results directory for easy access
+                summary_path = run_dir / "FINAL_SUMMARY.txt"
+                with open(summary_path, 'w') as f:
+                    f.write(f"FINAL ANALYSIS SUMMARY\n")
+                    f.write(f"===================\n\n")
+                    f.write(f"Image: {original_image_path.name}\n")
+                    f.write(f"Status: {summary.get('pass_fail_status', 'UNKNOWN')}\n")
+                    f.write(f"Quality Score: {summary.get('quality_score', 0)}/100\n")
+                    f.write(f"Total Defects: {summary.get('total_merged_defects', 0)}\n")
+                    
+                    if summary.get('failure_reasons'):
+                        f.write(f"\nFailure Reasons:\n")
+                        for reason in summary['failure_reasons']:
+                            f.write(f"  - {reason}\n")
+                    
+                    f.write(f"\nDetailed results available in: 4_final_analysis/\n")
+                
+                return final_report
+            else:
+                logging.error("Data acquisition stage failed to produce a report")
+                return None
+                
+        except Exception as e:
+            logging.error(f"Error during data acquisition stage: {e}", exc_info=True)
+            return None
 
 # --- New Interactive Functions ---
 
@@ -251,7 +326,7 @@ def main():
     """
     print("\n" + "="*80)
     print("UNIFIED FIBER OPTIC DEFECT DETECTION PIPELINE".center(80))
-    print("Interactive Mode".center(80))
+    print("Interactive Mode - Full Pipeline with Data Acquisition".center(80))
     print("="*80)
     
     # Get config path from user
@@ -296,7 +371,17 @@ def main():
             logging.info(f"Starting processing for {len(image_paths)} image(s).")
             for image_path in image_paths:
                 try:
-                    orchestrator.run_full_pipeline(image_path)
+                    final_report = orchestrator.run_full_pipeline(image_path)
+                    
+                    # Display quick summary
+                    if final_report and 'analysis_summary' in final_report:
+                        summary = final_report['analysis_summary']
+                        print(f"\n✓ {image_path.name}: {summary['pass_fail_status']} "
+                              f"(Score: {summary['quality_score']}/100, "
+                              f"Defects: {summary['total_merged_defects']})")
+                    else:
+                        print(f"\n✗ {image_path.name}: Processing failed")
+                        
                 except Exception as e:
                     logging.error(f"Failed to process {image_path}: {e}")
                     continue
@@ -323,13 +408,43 @@ def main():
                 continue
             
             logging.info(f"Found {len(image_files)} images to process. Starting batch.")
+            
+            # Summary statistics
+            passed = 0
+            failed = 0
+            errors = 0
+            
             for image_file in sorted(image_files):
                 try:
-                    orchestrator.run_full_pipeline(image_file)
+                    final_report = orchestrator.run_full_pipeline(image_file)
+                    
+                    if final_report and 'analysis_summary' in final_report:
+                        summary = final_report['analysis_summary']
+                        if summary['pass_fail_status'] == 'PASS':
+                            passed += 1
+                        else:
+                            failed += 1
+                            
+                        print(f"\n✓ {image_file.name}: {summary['pass_fail_status']} "
+                              f"(Score: {summary['quality_score']}/100)")
+                    else:
+                        errors += 1
+                        print(f"\n✗ {image_file.name}: Processing error")
+                        
                 except Exception as e:
                     logging.error(f"Failed to process {image_file}: {e}")
+                    errors += 1
                     continue
-            logging.info("Finished processing all images in the folder.")
+                    
+            # Print batch summary
+            print(f"\n{'='*60}")
+            print(f"BATCH PROCESSING COMPLETE")
+            print(f"{'='*60}")
+            print(f"Total Images: {len(image_files)}")
+            print(f"Passed: {passed}")
+            print(f"Failed: {failed}")
+            print(f"Errors: {errors}")
+            print(f"{'='*60}")
             
         elif choice == '3':
             print("\nExiting the application. Goodbye!")
