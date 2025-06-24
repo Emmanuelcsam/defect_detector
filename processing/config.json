@@ -1,8 +1,8 @@
 {
   "paths": {
-    "results_dir": "./processing/results",
+    "results_dir": "./results",
     "zones_methods_dir": "./zones_methods",
-    "detection_knowledge_base": "./processing/detection_kb.json"
+    "detection_knowledge_base": "./ultra_anomaly_kb.json"
   },
   
   "process_settings": {
