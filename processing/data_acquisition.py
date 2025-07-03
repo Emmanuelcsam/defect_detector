@@ -25,6 +25,17 @@ logging.basicConfig(
     format='%(asctime)s - [%(levelname)s] - %(message)s'
 )
 
+class NumpyEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles numpy types"""
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
+
 class DefectAggregator:
     """Aggregates and analyzes defects from multiple detection results with improved data handling"""
     
@@ -448,8 +459,18 @@ class DefectAggregator:
         for field in custom_fields:
             values = [d.get(field) for d in defects if field in d]
             if values:
-                # Use most common value
-                merged[field] = max(set(values), key=values.count)
+                # Handle different value types
+                first_value = values[0]
+                if isinstance(first_value, (list, dict)):
+                    # For lists/dicts, just use the first one
+                    merged[field] = first_value
+                else:
+                    # For hashable types, use most common value
+                    try:
+                        merged[field] = max(set(values), key=values.count)
+                    except TypeError:
+                        # If unhashable, use first value
+                        merged[field] = first_value
                 
         return merged
         
@@ -872,7 +893,7 @@ class DefectAggregator:
         
         # Save report
         with open(output_path, 'w') as f:
-            json.dump(report, f, indent=2)
+            json.dump(report, f, indent=2, cls=NumpyEncoder)
             
         self.logger.info(f"Saved final report to {output_path}")
         
@@ -1106,7 +1127,7 @@ class DefectAggregator:
                         'timestamp': datetime.now().isoformat(),
                         'total_issues': len(self.data_integrity_log),
                         'issues': self.data_integrity_log
-                    }, f, indent=2)
+                    }, f, indent=2, cls=NumpyEncoder)
                     
             self.logger.info("=" * 60)
             self.logger.info(f"Analysis Complete! Results saved to: {output_dir}")

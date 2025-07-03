@@ -1,0 +1,59 @@
+================================================================================
+FIBER OPTIC DEFECT ANALYSIS - COMPREHENSIVE SUMMARY
+================================================================================
+
+Report Version: 2.0
+Analysis Date: 2025-07-03T13:45:16.435899
+Image: img63.jpg
+Dimensions: 1152 × 864 pixels
+
+EXECUTIVE SUMMARY
+----------------------------------------
+Overall Status: FAIL
+Quality Score: 0/100
+Total Defects Found: 23
+
+Failure Reasons:
+  ✗ Quality score 0.0 below threshold (70)
+
+PROCESSING SUMMARY
+----------------------------------------
+Detection Sources Analyzed: 1
+Raw Defects Detected: 72
+After Clustering/Merging: 23
+Reduction Ratio: 68.1%
+
+DEFECT ANALYSIS
+----------------------------------------
+Distribution by Type:
+  • SCRATCH          14 ( 60.9%)
+  • DIG               8 ( 34.8%)
+  • CONTAMINATION     1 (  4.3%)
+
+Distribution by Severity:
+  ⚠ CRITICAL          0 (  0.0%)
+  ⚠ HIGH              0 (  0.0%)
+  • MEDIUM            9 ( 39.1%)
+  • LOW              14 ( 60.9%)
+  • NEGLIGIBLE        0 (  0.0%)
+
+COVERAGE ANALYSIS
+----------------------------------------
+Total Affected Area: 67,244 pixels
+Percentage of Image: 6.756%
+Average Defect Size: 2923.7 pixels
+Largest Defect: 64,472 pixels
+
+DETECTION CONFIDENCE
+----------------------------------------
+Mean Confidence: 61.3%
+Std Deviation: ±11.2%
+Range: 50.0% - 80.0%
+
+RECOMMENDATIONS
+----------------------------------------
+• Significant surface area affected (6.8%)
+
+================================================================================
+END OF REPORT
+================================================================================

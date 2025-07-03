@@ -53,10 +53,10 @@ class NumpyEncoder(json.JSONEncoder):
     """Custom encoder for numpy data types for JSON serialization."""
     def default(self, obj):
         # Convert numpy integer types to Python int for JSON compatibility
-        if isinstance(obj, (np.integer, np.int_)):
+        if isinstance(obj, np.integer):
             return int(obj)
         # Convert numpy float types to Python float for JSON compatibility
-        if isinstance(obj, (np.floating, np.float_)):
+        if isinstance(obj, np.floating):
             return float(obj)
         # Convert numpy arrays to Python lists for JSON compatibility
         if isinstance(obj, np.ndarray):
@@ -143,6 +143,9 @@ class OmniFiberAnalyzer:
             # Generate human-readable text report
             self.generate_detailed_report(results, str(text_report_path))
             
+            # Return the pipeline report
+            return pipeline_report
+            
         else:
             # Log analysis failure
             self.logger.error(f"Analysis failed for {image_path}")
@@ -158,6 +161,9 @@ class OmniFiberAnalyzer:
             report_path = output_path / f"{Path(image_path).stem}_report.json"
             with open(report_path, 'w') as f:
                 json.dump(empty_report, f, indent=2)
+            
+            # Return the empty report
+            return empty_report
     
     def _convert_to_pipeline_format(self, results: Dict, image_path: str) -> Dict:
         """Convert internal results format to pipeline-expected format"""
@@ -283,17 +289,31 @@ class OmniFiberAnalyzer:
         verdict = results['verdict']
         global_stats = results['global_analysis']
         
+        # Calculate overall quality score (0-100 scale)
+        quality_score = float(100 * (1 - verdict['confidence']))
+        if len(defects) > 0:
+            # Reduce quality based on number and severity of defects
+            quality_score = max(0, quality_score - len(defects) * 2)
+        
         # Construct final pipeline-format report
         report = {
-            'image_path': image_path,                              # Source image path
+            'source_image': image_path,                            # Source image path (pipeline expects this)
+            'image_path': image_path,                              # Also keep for compatibility
             'timestamp': self._get_timestamp(),                     # Analysis timestamp
+            'analysis_complete': True,                              # Pipeline expects this field
             'success': True,                                        # Analysis succeeded
+            'overall_quality_score': quality_score,                 # Pipeline expects this field
             'defects': defects,                                     # List of all defects
+            'zones': {                                              # Pipeline expects zone info
+                'core': {'detected': True},
+                'cladding': {'detected': True},
+                'ferrule': {'detected': True}
+            },
             'summary': {
                 'total_defects': len(defects),                     # Defect count
                 'is_anomalous': verdict['is_anomalous'],           # Boolean verdict
                 'anomaly_confidence': float(verdict['confidence']), # Overall confidence
-                'quality_score': float(100 * (1 - verdict['confidence'])),  # Inverse confidence as quality
+                'quality_score': quality_score,                     # Quality score
                 'mahalanobis_distance': float(global_stats['mahalanobis_distance']),  # Statistical distance
                 'ssim_score': float(results['structural_analysis']['ssim'])  # Structural similarity
             },

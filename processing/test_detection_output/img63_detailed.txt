@@ -1,0 +1,55 @@
+================================================================================
+ULTRA-COMPREHENSIVE ANOMALY DETECTION REPORT
+================================================================================
+
+FILE INFORMATION
+----------------------------------------
+Test File: img63.jpg
+Analysis Date: 2025-07-03_13:21:56
+Image Dimensions: (864, 1152)
+
+OVERALL VERDICT
+----------------------------------------
+Status: NORMAL
+Confidence: 0.0%
+
+GLOBAL STATISTICAL ANALYSIS
+----------------------------------------
+Mahalanobis Distance: 0.0000
+Comparison Scores:
+  - Mean: 0.0000
+  - Std: 0.0000
+  - Min: 0.0000
+  - Max: 0.0000
+
+TOP DEVIANT FEATURES (Z-Score > 2)
+----------------------------------------
+
+STRUCTURAL ANALYSIS
+----------------------------------------
+SSIM Index: 1.0000
+Luminance Similarity: 1.0000
+Contrast Similarity: 1.0000
+Structure Similarity: 1.0000
+
+LOCAL ANOMALY REGIONS
+----------------------------------------
+Total Regions Found: 0
+
+SPECIFIC DEFECTS DETECTED
+----------------------------------------
+Scratches: 30
+Digs: 41
+Blobs: 1
+Edge Irregularities: 7
+
+ANOMALY CRITERIA SUMMARY
+----------------------------------------
+Mahalanobis Threshold Exceeded: No
+Comparison Threshold Exceeded: No
+Low Structural Similarity: No
+Multiple Local Anomalies: No
+
+================================================================================
+END OF REPORT
+================================================================================

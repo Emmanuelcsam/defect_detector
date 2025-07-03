@@ -148,6 +148,10 @@ def reimagine_image(image_path, output_folder="reimagined_images"):
 
     print(f"\nProcessing complete!")
     print(f"All {len(os.listdir(output_folder))} reimagined images have been saved in the '{output_folder}' directory.")
+    
+    # Return list of created files
+    created_files = [os.path.join(output_folder, f) for f in os.listdir(output_folder) if f.endswith('.jpg')]
+    return created_files
 
 if __name__ == '__main__':
     # Ask the user for the image path
