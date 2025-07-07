@@ -1,0 +1,787 @@
+COMPREHENSIVE EXPLANATION OF detection.py
+=========================================
+
+OVERVIEW:
+This script implements Stage 3 of the fiber optic defect detection pipeline - the anomaly detection and defect analysis stage. It uses a sophisticated machine learning approach that combines statistical anomaly detection with specific defect pattern recognition. The system learns a reference model from good fiber samples and uses it to identify anomalies in test images through comprehensive feature extraction and comparison.
+
+IMPORTS AND DEPENDENCIES (Lines 3-13):
+======================================
+
+Core Libraries:
+1. `import json` - JSON file handling for saving/loading models and reports
+2. `import os` - Operating system interface for file operations
+3. `import cv2` - OpenCV for image processing and computer vision
+4. `import matplotlib.pyplot as plt` - Plotting library for visualizations
+5. `import numpy as np` - Numerical computing for array operations
+6. `from dataclasses import dataclass` - Decorator for configuration class
+7. `from typing import Optional, List, Dict, Any, Tuple` - Type hints for better code clarity
+8. `from pathlib import Path` - Modern path handling
+9. `import logging` - Comprehensive logging system
+10. `import time` - Time functions for timestamps and timing
+
+LOGGING CONFIGURATION (Lines 14-18):
+====================================
+Sets up logging with INFO level, showing timestamps and message levels in a structured format.
+
+CONFIGURATION DATACLASS: OmniConfig (Lines 21-49):
+==================================================
+```python
+@dataclass
+class OmniConfig:
+```
+
+Configuration parameters for the analyzer:
+
+1. **knowledge_base_path** (Optional[str]): Path to saved reference model
+   - Default: None (uses "fiber_anomaly_kb.json")
+   - Stores learned patterns from good samples
+
+2. **min_defect_size** (int): Minimum area in pixels for defect detection
+   - Default: 10 pixels
+   - Filters out noise and tiny artifacts
+
+3. **max_defect_size** (int): Maximum area for valid defects
+   - Default: 5000 pixels
+   - Excludes large areas that might be image artifacts
+
+4. **severity_thresholds** (Dict[str, float]): Maps severity levels to confidence scores
+   - CRITICAL: 0.9 (90%+ confidence)
+   - HIGH: 0.7 (70-89%)
+   - MEDIUM: 0.5 (50-69%)
+   - LOW: 0.3 (30-49%)
+   - NEGLIGIBLE: 0.1 (10-29%)
+
+5. **confidence_threshold** (float): Minimum confidence to report anomaly
+   - Default: 0.3 (30%)
+   - Filters out low-confidence detections
+
+6. **anomaly_threshold_multiplier** (float): Standard deviation multiplier
+   - Default: 2.5
+   - Used for statistical anomaly detection (2.5σ threshold)
+
+7. **enable_visualization** (bool): Generate visualization images
+   - Default: True
+   - Controls output of analysis images
+
+The `__post_init__` method initializes default severity thresholds if none provided.
+
+HELPER CLASS: NumpyEncoder (Lines 52-65):
+=========================================
+Custom JSON encoder handling NumPy data types:
+- Converts np.integer to Python int
+- Converts np.floating to Python float
+- Converts np.ndarray to Python list
+- Essential for saving NumPy-based analysis results to JSON
+
+MAIN CLASS: OmniFiberAnalyzer (Lines 68-2449):
+==============================================
+
+This is the core analyzer class containing all detection logic.
+
+__init__ METHOD (Lines 71-91):
+------------------------------
+Initializes the analyzer:
+1. Stores configuration
+2. Sets knowledge base path (default "fiber_anomaly_kb.json")
+3. Initializes empty reference model structure:
+   - features: List of feature dictionaries from reference images
+   - statistical_model: Statistical parameters (mean, std, covariance)
+   - archetype_image: Median image representing typical fiber
+   - feature_names: Consistent ordering of features
+   - comparison_results: Cache for comparisons
+   - learned_thresholds: Anomaly detection thresholds
+   - timestamp: Model creation time
+4. Creates logger instance
+5. Attempts to load existing knowledge base
+
+analyze_end_face METHOD (Lines 93-166):
+---------------------------------------
+Main pipeline interface method:
+
+1. **Setup** (Lines 95-101):
+   - Logs analysis start
+   - Creates output directory with parents
+
+2. **Reference Model Check** (Lines 104-108):
+   - Checks if reference model exists
+   - Builds minimal reference if missing
+
+3. **Analysis** (Lines 110-111):
+   - Runs comprehensive anomaly detection
+
+4. **Report Generation** (Lines 114-147):
+   - Converts results to pipeline format
+   - Saves JSON report with custom encoder
+   - Generates visualization if enabled
+   - Creates defect mask as NumPy array
+   - Generates detailed text report
+
+5. **Error Handling** (Lines 149-166):
+   - Creates error report on failure
+   - Returns empty defect list
+
+_convert_to_pipeline_format METHOD (Lines 168-329):
+---------------------------------------------------
+Converts internal analysis format to pipeline-expected structure:
+
+1. **Anomaly Regions** (Lines 175-206):
+   For each detected anomaly region:
+   - Extracts bounding box and centroid
+   - Calculates severity from confidence
+   - Creates defect entry with:
+     * Unique ID (ANOM_0001 format)
+     * Location and bounding box
+     * Area in pixels
+     * Confidence score
+     * Severity level
+     * Contributing algorithm name
+     * Detection metadata
+
+2. **Scratches** (Lines 212-235):
+   Linear defects detected by Hough transform:
+   - Calculates center point from endpoints
+   - Creates bounding box
+   - Estimates area (length × 2)
+   - Fixed 0.7 confidence
+   - Severity based on length (>50 pixels = MEDIUM)
+   - Includes angle/orientation
+
+3. **Digs/Pits** (Lines 238-260):
+   Small dark spots:
+   - Uses contour center
+   - Calculates radius from area
+   - Fixed 0.8 confidence
+   - Severity based on area (>100 pixels = HIGH)
+
+4. **Contamination/Blobs** (Lines 263-286):
+   Larger irregular regions:
+   - Uses blob bounding box
+   - Fixed 0.6 confidence
+   - Severity based on area (>500 pixels = MEDIUM)
+   - Includes shape metrics (circularity, aspect ratio)
+
+5. **Report Assembly** (Lines 288-328):
+   Creates complete pipeline report with:
+   - Image paths and timestamp
+   - Quality score (0-100)
+   - Defect list
+   - Zone detection status
+   - Summary statistics
+   - Analysis metadata
+
+_confidence_to_severity METHOD (Lines 331-340):
+-----------------------------------------------
+Maps confidence scores to severity levels:
+- Iterates through thresholds from highest to lowest
+- Returns first matching severity level
+- Defaults to NEGLIGIBLE if below all thresholds
+
+_create_defect_mask METHOD (Lines 342-379):
+-------------------------------------------
+Creates binary mask showing all defects:
+1. Initializes blank mask
+2. Fills anomaly regions as white rectangles
+3. Draws scratches as white lines (thickness 3)
+4. Draws digs as filled white circles
+5. Draws blob contours as filled regions
+Returns binary mask for downstream processing
+
+_build_minimal_reference METHOD (Lines 381-422):
+------------------------------------------------
+Creates minimal reference model from single image:
+1. Loads and processes image
+2. Extracts comprehensive features
+3. Creates statistical model:
+   - Uses single sample as mean
+   - Assumes 10% standard deviation
+   - Identity covariance matrix
+4. Sets default anomaly thresholds
+5. Stores grayscale image as archetype
+
+KNOWLEDGE BASE MANAGEMENT (Lines 424-494):
+==========================================
+
+load_knowledge_base METHOD (Lines 424-452):
+-------------------------------------------
+Loads saved reference model:
+1. Checks if file exists
+2. Loads JSON data
+3. Converts lists back to NumPy arrays:
+   - Archetype image
+   - Statistical parameters
+4. Handles load failures gracefully
+
+save_knowledge_base METHOD (Lines 454-487):
+-------------------------------------------
+Saves reference model to disk:
+1. Creates copy to avoid modifying original
+2. Converts NumPy arrays to lists
+3. Removes large comparison data
+4. Updates timestamp
+5. Writes to JSON file
+
+_get_timestamp METHOD (Lines 489-494):
+--------------------------------------
+Returns formatted timestamp string (YYYY-MM-DD_HH:MM:SS)
+
+DATA LOADING (Lines 496-575):
+==============================
+
+load_image METHOD (Lines 498-517):
+----------------------------------
+Loads images from various sources:
+1. Resets metadata
+2. Handles JSON format (custom format)
+3. Handles standard image formats
+4. Stores basic metadata
+5. Returns None on failure
+
+_load_from_json METHOD (Lines 519-575):
+----------------------------------------
+Loads matrix data from JSON files:
+1. Parses JSON structure
+2. Extracts dimensions
+3. Creates empty matrix
+4. Fills pixel values with bounds checking
+5. Handles both single-value and BGR formats
+6. Warns about out-of-bounds pixels
+7. Stores comprehensive metadata
+
+STATISTICAL FUNCTIONS (Lines 577-643):
+======================================
+
+These implement core statistical calculations:
+
+_compute_skewness (Lines 579-589):
+-----------------------------------
+Skewness measures distribution asymmetry:
+- Formula: E[((X - μ)/σ)³]
+- Positive = right tail
+- Negative = left tail
+- Zero = symmetric
+
+_compute_kurtosis (Lines 591-601):
+-----------------------------------
+Kurtosis measures distribution "peakedness":
+- Formula: E[((X - μ)/σ)⁴] - 3
+- Positive = heavy tails
+- Negative = light tails
+- Zero = normal distribution
+
+_compute_entropy (Lines 603-612):
+----------------------------------
+Shannon entropy measures information content:
+- Formula: -Σ(p × log₂(p))
+- Higher = more random/complex
+- Lower = more uniform/simple
+
+_compute_correlation (Lines 614-631):
+-------------------------------------
+Pearson correlation coefficient:
+- Formula: cov(X,Y)/(σₓ × σᵧ)
+- Range: [-1, 1]
+- Measures linear relationship
+
+_compute_spearman_correlation (Lines 633-642):
+-----------------------------------------------
+Rank correlation:
+- Converts values to ranks
+- Computes Pearson on ranks
+- Robust to outliers
+
+FEATURE EXTRACTION (Lines 645-1170):
+====================================
+
+The system extracts 100+ features from images using multiple methods:
+
+_sanitize_feature_value METHOD (Lines 646-657):
+------------------------------------------------
+Ensures feature values are valid:
+- Handles array-like values
+- Converts to float
+- Replaces NaN/Inf with 0
+
+extract_ultra_comprehensive_features METHOD (Lines 659-709):
+------------------------------------------------------------
+Main feature extraction orchestrator:
+1. Converts to grayscale
+2. Applies Gaussian blur for noise reduction
+3. Calls 12 specialized feature extractors
+4. Handles extraction failures gracefully
+5. Sanitizes all values
+6. Returns feature dictionary and sorted names
+
+Feature Extraction Methods:
+
+1. **_extract_statistical_features** (Lines 711-737):
+   Basic intensity statistics:
+   - Mean, standard deviation, variance
+   - Skewness, kurtosis (distribution shape)
+   - Min, max, range
+   - Median, MAD (robust statistics)
+   - Percentiles (10th, 25th, 50th, 75th, 90th)
+   - Entropy, energy
+
+2. **_extract_matrix_norms** (Lines 739-748):
+   Matrix norms measure image "magnitude":
+   - Frobenius norm: √(Σ(x²))
+   - L1 norm: Σ|x|
+   - L2 norm: √(Σ(x²))
+   - L∞ norm: max|x|
+   - Nuclear norm: Σ(singular values)
+   - Trace: Σ(diagonal)
+
+3. **_extract_lbp_features** (Lines 750-779):
+   Local Binary Patterns for texture:
+   - Compares pixels to neighbors
+   - Multiple radii (1, 2, 3, 5)
+   - Creates binary patterns
+   - Computes statistics of patterns
+
+4. **_extract_glcm_features** (Lines 781-842):
+   Gray-Level Co-occurrence Matrix:
+   - Measures pixel pair relationships
+   - Multiple distances (1, 2, 3) and angles (0°, 45°, 90°, 135°)
+   - Extracts:
+     * Contrast: Local variations
+     * Energy: Uniformity
+     * Homogeneity: Closeness to diagonal
+
+5. **_extract_fourier_features** (Lines 844-896):
+   2D Fourier Transform analysis:
+   - Magnitude and phase spectra
+   - Power spectrum
+   - Radial profile
+   - Spectral centroid and spread
+   - DC component
+
+6. **_extract_multiscale_features** (Lines 898-940):
+   Gaussian pyramid analysis:
+   - Progressive downsampling
+   - Statistics at each scale
+   - Detail coefficients between scales
+   - Laplacian pyramid for edges
+
+7. **_extract_morphological_features** (Lines 942-984):
+   Shape-based operations:
+   - White/black tophat at multiple scales
+   - Binary morphology statistics
+   - Erosion/dilation ratios
+   - Morphological gradient
+
+8. **_extract_shape_features** (Lines 986-1009):
+   Hu moments (rotation invariant):
+   - 7 moment invariants
+   - Log-transformed for scale invariance
+   - Centroid location
+
+9. **_extract_svd_features** (Lines 1011-1039):
+   Singular Value Decomposition:
+   - Largest singular value
+   - Energy distribution
+   - Effective rank
+   - Components for 90%/95% energy
+
+10. **_extract_entropy_features** (Lines 1041-1077):
+    Various entropy measures:
+    - Shannon entropy
+    - Renyi entropy (α=2)
+    - Tsallis entropy (q=2)
+    - Local entropy statistics
+
+11. **_extract_gradient_features** (Lines 1079-1110):
+    Edge and gradient analysis:
+    - Sobel gradients (x, y)
+    - Gradient magnitude and orientation
+    - Laplacian (2nd derivative)
+    - Canny edge density
+
+12. **_extract_topological_proxy_features** (Lines 1112-1170):
+    Topological characteristics:
+    - Connected components at multiple thresholds
+    - Holes (inverted components)
+    - Persistence (changes across thresholds)
+    - Approximates Betti numbers
+
+COMPARISON METHODS (Lines 1172-1374):
+=====================================
+
+compute_exhaustive_comparison METHOD (Lines 1174-1269):
+--------------------------------------------------------
+Computes 12 different similarity/distance metrics:
+
+1. **Distance Metrics**:
+   - Euclidean (L2): √Σ(x-y)²
+   - Manhattan (L1): Σ|x-y|
+   - Chebyshev (L∞): max|x-y|
+   - Cosine: 1 - (x·y)/(|x||y|)
+
+2. **Correlation Measures**:
+   - Pearson: Linear correlation
+   - Spearman: Rank correlation
+
+3. **Statistical Tests**:
+   - Kolmogorov-Smirnov: Maximum CDF difference
+
+4. **Information Theory**:
+   - KL Divergence: Σp log(p/q)
+   - JS Divergence: Symmetric KL
+   - Chi-square: Σ(p-q)²/(p+q)
+
+5. **Other Metrics**:
+   - Wasserstein: Earth mover's distance
+   - Feature SSIM: Structural similarity
+
+_compute_ks_statistic METHOD (Lines 1271-1290):
+------------------------------------------------
+Kolmogorov-Smirnov test implementation:
+- Computes empirical CDFs
+- Finds maximum difference
+- Non-parametric test
+
+_compute_wasserstein_distance METHOD (Lines 1292-1305):
+--------------------------------------------------------
+1D Wasserstein distance:
+- Sorts both distributions
+- Interpolates to same size
+- Computes average transport cost
+
+compute_image_structural_comparison METHOD (Lines 1307-1374):
+-------------------------------------------------------------
+SSIM (Structural Similarity Index) implementation:
+
+1. **Preprocessing**:
+   - Ensures same dimensions
+   - Creates Gaussian window
+
+2. **Local Statistics**:
+   - Means (μ₁, μ₂)
+   - Variances (σ₁², σ₂²)
+   - Covariance (σ₁₂)
+
+3. **SSIM Components**:
+   - Luminance: (2μ₁μ₂ + C₁)/(μ₁² + μ₂² + C₁)
+   - Contrast: (2σ₁σ₂ + C₂)/(σ₁² + σ₂² + C₂)
+   - Structure: (σ₁₂ + C₂/2)/(σ₁σ₂ + C₂/2)
+
+4. **Multi-scale SSIM**:
+   - Computes at multiple resolutions
+   - More robust to scale differences
+
+REFERENCE MODEL BUILDING (Lines 1376-1686):
+===========================================
+
+build_comprehensive_reference_model METHOD (Lines 1378-1588):
+-------------------------------------------------------------
+Builds statistical model from reference images:
+
+1. **File Discovery** (Lines 1383-1410):
+   - Finds all valid image files
+   - Supports multiple formats
+   - Validates directory exists
+
+2. **Feature Extraction** (Lines 1412-1449):
+   - Processes each reference image
+   - Extracts comprehensive features
+   - Stores grayscale versions
+
+3. **Statistical Modeling** (Lines 1461-1476):
+   - Computes feature statistics
+   - Builds robust covariance matrix
+   - Handles outliers
+
+4. **Archetype Creation** (Lines 1478-1490):
+   - Aligns all images to same size
+   - Computes pixel-wise median
+   - Creates "typical" fiber image
+
+5. **Threshold Learning** (Lines 1492-1559):
+   - Computes all pairwise comparisons
+   - Calculates weighted anomaly scores
+   - Learns statistical thresholds:
+     * Mean and std of scores
+     * Percentiles (90th, 95th, 99th)
+     * Final threshold with cap
+
+6. **Model Storage** (Lines 1561-1580):
+   - Saves complete model structure
+   - Includes all parameters
+   - Timestamps creation
+
+_compute_robust_statistics METHOD (Lines 1590-1675):
+----------------------------------------------------
+Robust statistics resistant to outliers:
+
+1. **Robust Mean**:
+   - Uses median as estimate
+   - More stable than arithmetic mean
+
+2. **MAD (Median Absolute Deviation)**:
+   - Robust variance estimate
+   - Scaled by 1.4826 for consistency
+
+3. **Weighted Covariance**:
+   - Uses Gaussian weights
+   - Down-weights outliers
+   - Bias correction
+
+4. **Matrix Conditioning**:
+   - Adds regularization
+   - Ensures positive semi-definite
+   - Stable inversion
+
+_get_default_thresholds METHOD (Lines 1677-1686):
+--------------------------------------------------
+Provides fallback thresholds when learning fails
+
+ANOMALY DETECTION (Lines 1688-1876):
+====================================
+
+detect_anomalies_comprehensive METHOD (Lines 1690-1876):
+---------------------------------------------------------
+Main anomaly detection pipeline:
+
+1. **Setup and Validation** (Lines 1692-1717):
+   - Checks reference model exists
+   - Loads test image
+   - Converts to grayscale
+   - Extracts features
+
+2. **Global Statistical Analysis** (Lines 1718-1752):
+   - Computes Mahalanobis distance: √((x-μ)ᵀΣ⁻¹(x-μ))
+   - Calculates Z-scores for each feature
+   - Identifies most deviant features
+   - Falls back to normalized Euclidean if needed
+
+3. **Individual Comparisons** (Lines 1753-1790):
+   - Compares test against each reference
+   - Computes weighted anomaly score
+   - Caps individual terms to prevent overflow
+   - Calculates comparison statistics
+
+4. **Structural Analysis** (Lines 1792-1807):
+   - Loads archetype image
+   - Resizes for comparison
+   - Computes SSIM and components
+
+5. **Local Anomaly Detection** (Lines 1809-1817):
+   - Creates anomaly heatmap
+   - Finds distinct regions
+   - Maps to original coordinates
+
+6. **Specific Defect Detection** (Lines 1818-1820):
+   - Runs targeted defect detectors
+
+7. **Verdict Determination** (Lines 1822-1840):
+   Multiple criteria for anomaly:
+   - Mahalanobis > threshold
+   - Max comparison > 95th percentile
+   - SSIM < 0.7
+   - >3 anomaly regions
+   - Any region confidence >0.8
+
+8. **Results Assembly** (Lines 1844-1876):
+   Comprehensive results dictionary with:
+   - Images and features
+   - Global statistics
+   - Structural metrics
+   - Local anomalies
+   - Specific defects
+   - Overall verdict
+
+_compute_local_anomaly_map METHOD (Lines 1878-1931):
+-----------------------------------------------------
+Sliding window anomaly detection:
+
+1. **Multi-scale Windows**:
+   - Sizes: 16×16, 32×32, 64×64
+   - 50% overlap (stride = size/2)
+
+2. **Local Comparison**:
+   - Pixel difference
+   - Local SSIM approximation
+   - Takes maximum score
+
+3. **Post-processing**:
+   - Gaussian smoothing
+   - Reduces noise
+
+_find_anomaly_regions METHOD (Lines 1933-1986):
+------------------------------------------------
+Extracts distinct anomaly regions:
+
+1. **Thresholding**:
+   - 80th percentile of positive values
+   - Creates binary mask
+
+2. **Connected Components**:
+   - Finds separate regions
+   - Filters small areas (<20 pixels)
+
+3. **Region Properties**:
+   - Bounding box
+   - Area and centroid
+   - Confidence score
+   - Scales to original size
+
+_detect_specific_defects METHOD (Lines 1988-2099):
+---------------------------------------------------
+Targeted defect detection:
+
+1. **Scratch Detection** (Lines 1998-2016):
+   - Canny edge detection
+   - Hough line transform
+   - Filters by minimum length (25 pixels)
+   - Extracts angle and endpoints
+
+2. **Dig/Pit Detection** (Lines 2018-2042):
+   - Morphological black-hat
+   - Finds dark spots
+   - Thresholds at 95th percentile
+   - Filters by size constraints
+
+3. **Blob Detection** (Lines 2044-2075):
+   - Adaptive thresholding
+   - Morphological cleaning
+   - Computes shape metrics
+   - Filters large blobs (>100 pixels)
+
+4. **Edge Irregularities** (Lines 2077-2097):
+   - Sobel gradient magnitude
+   - Thresholds at 95th percentile
+   - Finds irregular edges
+
+VISUALIZATION (Lines 2101-2345):
+================================
+
+visualize_comprehensive_results METHOD (Lines 2103-2301):
+---------------------------------------------------------
+Creates 3×4 grid visualization with 8 panels:
+
+1. **Panel 1**: Original test image
+2. **Panel 2**: Reference archetype
+3. **Panel 3**: SSIM map with colorbar
+4. **Panel 4**: Anomaly heatmap overlay
+5. **Panel 5**: Detected anomalies (blue boxes)
+6. **Panel 6**: Specific defects (color-coded)
+7. **Panel 7**: Feature deviation chart
+8. **Panel 8**: Analysis summary text
+
+Color coding:
+- Scratches: Cyan
+- Digs: Magenta
+- Blobs: Yellow
+- Edges: Green
+- Anomalies: Blue
+
+_save_simple_anomaly_image METHOD (Lines 2303-2345):
+-----------------------------------------------------
+Creates simplified output:
+- Blue highlights for all defects
+- Verdict text overlay
+- Single image output
+
+REPORT GENERATION (Lines 2347-2448):
+====================================
+
+generate_detailed_report METHOD (Lines 2349-2448):
+--------------------------------------------------
+Creates comprehensive text report with sections:
+
+1. **File Information**:
+   - Filename, date, dimensions
+
+2. **Overall Verdict**:
+   - Status and confidence
+
+3. **Global Statistics**:
+   - Mahalanobis distance
+   - Comparison scores
+
+4. **Deviant Features**:
+   - Features with Z-score >2
+   - Test vs reference values
+
+5. **Structural Analysis**:
+   - SSIM components
+
+6. **Local Anomalies**:
+   - Region details
+   - First 5 regions detailed
+
+7. **Specific Defects**:
+   - Counts by type
+
+8. **Criteria Summary**:
+   - Which thresholds triggered
+
+MAIN FUNCTION (Lines 2451-2497):
+================================
+Interactive testing interface:
+- Prompts for test images
+- Creates timestamped output
+- Runs full analysis
+- Lists output files
+
+MATHEMATICAL CONCEPTS:
+======================
+
+1. **Mahalanobis Distance**:
+   - Measures distance accounting for correlations
+   - D² = (x-μ)ᵀΣ⁻¹(x-μ)
+   - Scale-invariant
+
+2. **SSIM (Structural Similarity)**:
+   - Perceptual image similarity
+   - Combines luminance, contrast, structure
+   - Range: [-1, 1], perfect match = 1
+
+3. **Information Theory Metrics**:
+   - KL Divergence: Asymmetric difference
+   - JS Divergence: Symmetric KL
+   - Entropy: Information content
+
+4. **Robust Statistics**:
+   - Median/MAD vs Mean/Std
+   - Resistant to outliers
+   - Better for real-world data
+
+5. **Multi-scale Analysis**:
+   - Gaussian pyramids
+   - Captures features at different scales
+   - More complete representation
+
+KEY ALGORITHMS:
+===============
+
+1. **Feature Extraction Pipeline**:
+   - 100+ features from 12 methods
+   - Comprehensive image characterization
+   - Handles multiple aspects
+
+2. **Anomaly Detection**:
+   - Statistical (Mahalanobis)
+   - Comparative (vs references)
+   - Structural (SSIM)
+   - Local (sliding window)
+   - Multi-criteria decision
+
+3. **Defect-Specific Detection**:
+   - Hough transform for lines
+   - Morphological for spots
+   - Adaptive threshold for blobs
+   - Gradient for edges
+
+4. **Robust Model Building**:
+   - Handles outliers
+   - Learns from examples
+   - Adaptive thresholds
+
+This detection system provides comprehensive anomaly detection combining:
+- Global statistical analysis
+- Local pattern recognition
+- Specific defect detection
+- Learned reference models
+- Multi-criteria decisions
+
+The output integrates seamlessly with the pipeline, providing structured defect data for final aggregation and quality assessment.

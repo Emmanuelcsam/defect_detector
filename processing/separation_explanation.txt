@@ -1,0 +1,457 @@
+COMPREHENSIVE EXPLANATION OF separation.py
+==========================================
+
+OVERVIEW:
+This script implements Stage 2 of the fiber optic defect detection pipeline - the region separation/zoning stage. It orchestrates multiple segmentation methods to identify and separate the three main regions of a fiber optic cable: core (center fiber), cladding (protective layer), and ferrule (outer housing). The system uses an advanced consensus algorithm that runs 11 different segmentation approaches, evaluates their agreement, and produces a final, high-confidence segmentation mask.
+
+IMPORTS AND DEPENDENCIES (Lines 1-34):
+======================================
+
+System Libraries:
+1. `import os` - Operating system interface for environment variables and file operations
+2. `import sys` - System-specific parameters, used for Python path manipulation and subprocess execution
+3. `import json` - JSON encoding/decoding for saving results and loading configuration
+4. `import time` - Time measurement for performance tracking
+5. `from pathlib import Path` - Object-oriented path handling for cross-platform compatibility
+6. `from datetime import datetime` - Date/time handling (imported but not actively used)
+7. `import subprocess` - Runs segmentation methods in isolated processes for stability
+8. `import tempfile` - Creates temporary directories for intermediate processing
+9. `from typing import Dict, List, Tuple, Optional, Any` - Type hints for better code documentation
+10. `import shutil` - File operations (imported but not used)
+11. `import warnings` - Suppresses library warnings for cleaner output
+
+Numerical and Computer Vision Libraries:
+12. `import numpy as np` - Array operations and mathematical computations
+13. `import cv2` - OpenCV for image processing and morphological operations
+
+Optional Libraries with Fallback:
+14-24. **matplotlib**: Plotting library for visualizations
+    - Sets non-interactive backend ('Agg') for server environments
+    - Falls back gracefully if not installed
+    - `HAS_MATPLOTLIB` flag controls visualization features
+
+27-33. **scipy components**: Advanced image processing
+    - `median_filter`, `gaussian_filter` for noise reduction
+    - `binary_opening`, `binary_closing` for morphological operations
+    - `HAS_SCIPY_FULL` flag enables enhanced processing
+
+HELPER CLASSES:
+===============
+
+NumpyEncoder CLASS (Lines 35-44):
+---------------------------------
+Custom JSON encoder handling NumPy data types:
+- Converts `np.integer` to Python `int`
+- Converts `np.floating` to Python `float`
+- Converts `np.ndarray` to Python `list`
+- Essential for saving NumPy-based results to JSON
+
+EnhancedConsensusSystem CLASS (Lines 46-180):
+==============================================
+
+This class implements the sophisticated consensus algorithm for combining multiple segmentation results.
+
+__init__ METHOD (Lines 50-51):
+-------------------------------
+```python
+def __init__(self, min_agreement_ratio=0.3):
+    self.min_agreement_ratio = min_agreement_ratio
+```
+- `min_agreement_ratio`: Minimum fraction of methods that must agree (default 30%)
+- Lower values allow consensus with fewer agreeing methods
+
+_calculate_iou METHOD (Lines 53-60):
+------------------------------------
+Calculates Intersection over Union (IoU) between two masks:
+```python
+iou_score = np.sum(intersection) / (np.sum(union) + 1e-6)
+```
+- IoU = Area of Overlap / Area of Union
+- Range: [0, 1] where 1 = perfect overlap
+- Used to measure agreement between segmentation results
+
+generate_consensus METHOD (Lines 62-149):
+-----------------------------------------
+Multi-stage consensus algorithm:
+
+**Stage 1: Preliminary Weighted Pixel Vote (Lines 80-94)**
+```python
+weighted_votes = np.zeros((h, w, 3), dtype=np.float32)
+```
+- Creates 3-channel vote array (core/cladding/ferrule)
+- Each method votes for each pixel with weight = historical_score × confidence
+- Pixels classified by maximum vote (argmax)
+- Creates preliminary masks for validation
+
+**Stage 2: Identify High-Agreement Methods (Lines 95-108)**
+```python
+if core_iou > 0.6 and cladding_iou > 0.6:
+    high_agreement_results.append(r)
+```
+- Compares each method's result to preliminary consensus
+- Methods with >60% IoU for both core and cladding are "high-agreement"
+- Falls back to all valid results if none pass threshold
+
+**Stage 3: Parameter-Space Consensus (Lines 109-131)**
+```python
+final_center = (
+    np.average(consensus_params['cx'], weights=weights),
+    np.average(consensus_params['cy'], weights=weights)
+)
+```
+- Extracts geometric parameters (center, radii) from high-agreement methods
+- Computes weighted average of parameters
+- Weights based on method score × confidence
+
+**Stage 4: Generate Final Ideal Masks (Lines 132-149)**
+- Converts averaged parameters to pixel masks
+- Ensures mask consistency (mutual exclusivity)
+- Returns comprehensive consensus result with:
+  - Final masks
+  - Geometric parameters
+  - Contributing methods list
+  - All individual results
+
+create_masks_from_params METHOD (Lines 151-164):
+-------------------------------------------------
+Converts geometric parameters to binary masks:
+```python
+dist_from_center = np.sqrt((x_grid - cx)**2 + (y_grid - cy)**2)
+core_mask = (dist_from_center <= core_radius)
+```
+- Creates distance map from center point
+- Core: pixels within core_radius
+- Cladding: pixels between core_radius and cladding_radius
+- Ferrule: pixels beyond cladding_radius
+
+ensure_mask_consistency METHOD (Lines 166-180):
+------------------------------------------------
+Cleans masks and ensures mutual exclusivity:
+1. Applies morphological opening (remove noise)
+2. Applies morphological closing (fill holes)
+3. Removes overlaps:
+   - Cladding pixels overlapping core → removed
+   - Ferrule pixels overlapping core/cladding → removed
+
+SegmentationResult CLASS (Lines 182-205):
+=========================================
+
+Data container for individual method results:
+
+Attributes:
+- `method_name`: Identifier for the segmentation method
+- `image_path`: Path to processed image
+- `center`: (x, y) coordinates of fiber center
+- `core_radius`: Radius of core in pixels
+- `cladding_radius`: Radius of cladding in pixels
+- `masks`: Dictionary with 'core', 'cladding', 'ferrule' binary masks
+- `confidence`: Quality score [0, 1]
+- `execution_time`: Processing duration in seconds
+- `error`: Error message if method failed
+
+to_dict METHOD:
+- Converts result to JSON-serializable dictionary
+- Includes `has_masks` boolean flag
+
+UnifiedSegmentationSystem CLASS (Lines 207-536):
+================================================
+
+Main orchestrator managing the entire segmentation pipeline.
+
+__init__ METHOD (Lines 210-227):
+--------------------------------
+Initialization tasks:
+1. Sets up directories:
+   - `methods_dir`: Contains segmentation method scripts
+   - `output_dir`: For saving results
+2. Initializes performance tracking:
+   - `method_scores`: Historical performance scores
+   - `method_accuracy`: Current run accuracy
+3. Loads knowledge base (historical data)
+4. Discovers and loads available methods
+5. Creates consensus system instance
+6. Defines vulnerable methods list (need pre-processed images)
+
+load_knowledge METHOD (Lines 229-236):
+--------------------------------------
+Loads historical performance data:
+- Reads from "segmentation_knowledge.json"
+- Updates dataset statistics
+- Handles missing/corrupt files gracefully
+
+save_knowledge METHOD (Lines 238-241):
+--------------------------------------
+Persists performance data:
+- Saves to JSON with custom encoder
+- Preserves method scores across runs
+
+load_methods METHOD (Lines 243-259):
+------------------------------------
+Discovers available segmentation methods:
+```python
+method_files = [
+    'adaptive_intensity.py', 'bright_core_extractor.py', 
+    'computational_separation.py', 'geometric_approach.py',
+    # ... 11 methods total
+]
+```
+Each method:
+- Must exist in methods directory
+- Gets historical score (default 1.0)
+- Registered with path and score
+
+detect_and_inpaint_anomalies METHOD (Lines 261-269):
+-----------------------------------------------------
+Pre-processes images to remove defects:
+1. Converts to grayscale
+2. Applies black-hat morphology (detects dark spots)
+3. Thresholds to create defect mask
+4. Optionally cleans with scipy morphology
+5. Inpaints defects using Telea algorithm
+Returns: (inpainted_image, defect_mask)
+
+run_method_isolated METHOD (Lines 271-336):
+-------------------------------------------
+Executes segmentation methods in isolated subprocesses:
+
+**Script Generation (Lines 276-321)**:
+```python
+script_content = f"""
+import sys, json, os
+from pathlib import Path
+import matplotlib
+matplotlib.use('Agg')
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+sys.path.insert(0, r"{self.methods_dir.resolve()}")
+...
+"""
+```
+- Generates Python script dynamically
+- Sets up headless environment
+- Adds methods directory to Python path
+- Includes method-specific import and call
+
+**Method Mapping (Lines 290-304)**:
+Each method has specific import and function call:
+```python
+'adaptive_intensity': "from adaptive_intensity import adaptive_segment_image\n        
+                       result = adaptive_segment_image(image_path_str, output_dir=output_dir_str)"
+```
+
+**Execution (Lines 324-336)**:
+- Runs script with subprocess
+- 2-minute timeout
+- Captures output as JSON
+- Handles timeouts and errors
+
+run_method METHOD (Lines 338-372):
+----------------------------------
+Processes single method execution:
+
+1. **Execution** (Lines 342-343):
+   - Creates temporary directory
+   - Runs method in isolation
+
+2. **Result Processing** (Lines 345-365):
+   - Extracts geometric parameters
+   - Generates masks from parameters
+   - Validates core circularity:
+     ```python
+     circularity = (4 * np.pi * area) / (perimeter**2)
+     if circularity < 0.85:
+         result.confidence *= 0.5
+     ```
+   - Penalizes non-circular cores
+
+3. **Error Handling** (Lines 367-369):
+   - Captures method errors
+   - Records execution time
+
+update_learning METHOD (Lines 374-394):
+---------------------------------------
+Updates method performance scores:
+
+1. **Evaluation** (Lines 378-382):
+   - Calculates IoU against consensus
+   - Averages core and cladding IoU
+
+2. **Score Update** (Lines 384-391):
+   ```python
+   target_score = 0.1 + (1.9 * avg_iou)
+   new_score = current_score * (1 - learning_rate) + target_score * learning_rate
+   ```
+   - Maps IoU [0,1] to score [0.1,2.0]
+   - Exponential moving average with learning_rate=0.1
+   - Updates scores and accuracy metrics
+
+3. **Persistence** (Line 394):
+   - Saves updated knowledge
+
+process_image METHOD (Lines 396-435):
+-------------------------------------
+Main processing pipeline for single image:
+
+1. **Image Loading** (Lines 398-400):
+   - Loads image and extracts dimensions
+
+2. **Pre-processing** (Lines 402-408):
+   - Detects and inpaints anomalies
+   - Saves temporary inpainted image
+
+3. **Method Execution** (Lines 410-420):
+   - Runs each registered method
+   - Vulnerable methods use inpainted image
+   - Others use original image
+   - Logs success/failure and metrics
+
+4. **Consensus Generation** (Lines 422-424):
+   - Passes all results to consensus system
+   - Includes method scores and image shape
+
+5. **Post-processing** (Lines 426-435):
+   - Updates learning if consensus achieved
+   - Saves all results
+   - Cleans up temporary files
+
+save_results METHOD (Lines 437-473):
+------------------------------------
+Comprehensive output generation:
+
+1. **JSON Report** (Lines 442-446):
+   - Saves consensus parameters
+   - Includes method accuracies
+   - Excludes non-serializable data
+
+2. **Mask Images** (Lines 451-455):
+   - Binary masks (0/255) for each region
+   - Defect mask showing anomalies
+
+3. **Region Extraction** (Lines 458-466):
+   ```python
+   region_core = cv2.bitwise_and(image, image, mask=masks['core'])
+   ```
+   - Applies masks to original image
+   - Creates separate images for each region
+
+4. **Visualization** (Lines 469-471):
+   - Calls summary visualization if matplotlib available
+
+create_summary_visualization METHOD (Lines 475-513):
+----------------------------------------------------
+Creates 2×2 subplot visualization:
+
+1. **Original with Boundaries** (Top-left):
+   - Shows original image
+   - Overlays circular boundaries in lime (core) and cyan (cladding)
+
+2. **Final Segmentation Masks** (Top-right):
+   - Color-coded masks: Red (core), Green (cladding), Blue (ferrule)
+
+3. **Method Performance** (Bottom-left):
+   - Text table showing each method's IoU accuracy
+   - Sorted by performance
+
+4. **Separated Regions** (Bottom-right):
+   - Combined view of extracted regions
+
+run METHOD (Lines 515-531):
+---------------------------
+Interactive entry point:
+1. Displays welcome banner
+2. Validates methods loaded
+3. Prompts for input folder
+4. Finds all PNG/JPG images
+5. Processes each image
+6. Shows completion message
+
+MAIN FUNCTION (Lines 533-539):
+==============================
+Script entry point:
+- Gets methods directory from command line or uses default
+- Creates system instance
+- Starts interactive processing
+
+SEGMENTATION METHODS:
+=====================
+
+The system includes 11 different segmentation approaches:
+
+1. **adaptive_intensity**: Uses adaptive thresholding based on local intensity
+2. **bright_core_extractor**: Focuses on bright central region
+3. **computational_separation**: Mathematical approach using edge detection
+4. **geometric_approach**: Assumes circular geometry
+5. **gradient_approach**: Uses gradient magnitude for boundaries
+6. **guess_approach**: Multi-modal analysis with multiple techniques
+7. **hough_separation**: Hough circle transform
+8. **segmentation**: Complex pipeline with multiple stages
+9. **threshold_separation**: Simple intensity thresholding
+10. **unified_core_cladding_detector**: Combined detection approach
+11. **intelligent_segmenter**: Machine learning-inspired approach
+
+MATHEMATICAL CONCEPTS:
+======================
+
+1. **Intersection over Union (IoU)**:
+   - IoU = |A ∩ B| / |A ∪ B|
+   - Measures overlap between two regions
+   - Used for agreement assessment
+
+2. **Weighted Voting**:
+   - Vote = Method_Score × Confidence
+   - Pixel classification by argmax
+   - Combines historical performance with current confidence
+
+3. **Weighted Average**:
+   - Parameter = Σ(weight_i × value_i) / Σ(weight_i)
+   - Robust parameter estimation
+   - Emphasizes reliable methods
+
+4. **Circularity**:
+   - C = 4π × Area / Perimeter²
+   - Perfect circle: C = 1.0
+   - Used to validate core shape
+
+5. **Exponential Moving Average**:
+   - new = old × (1 - α) + target × α
+   - Smooth score updates
+   - α = 0.1 (learning rate)
+
+ALGORITHM FLOW:
+===============
+
+1. **Initialization**:
+   - Load historical knowledge
+   - Discover available methods
+   - Set up directories
+
+2. **For Each Image**:
+   - Detect and inpaint defects
+   - Run all 11 methods (some on original, some on inpainted)
+   - Each method produces geometric parameters
+
+3. **Consensus Algorithm**:
+   - Stage 1: Weighted pixel voting → preliminary masks
+   - Stage 2: Filter methods by agreement with preliminary
+   - Stage 3: Average parameters from agreeing methods
+   - Stage 4: Generate final masks from averaged parameters
+
+4. **Learning Update**:
+   - Compare each method to consensus
+   - Update performance scores
+   - Save for future runs
+
+5. **Output Generation**:
+   - Save masks and extracted regions
+   - Create visualization
+   - Generate JSON report
+
+KEY FEATURES:
+=============
+
+1. **Robustness**: Isolated execution prevents method crashes from affecting system
+2. **Adaptivity**: Learning system improves over time
+3. **Flexibility**: Easy to add new segmentation methods
+4. **Transparency**: Detailed logging and visualization
+5. **Quality Control**: Circularity validation and confidence scoring
+
+The separation stage provides critical region information for the detection stage, allowing defects to be analyzed within their specific context (core vs cladding vs ferrule).

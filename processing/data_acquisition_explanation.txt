@@ -1,0 +1,573 @@
+COMPREHENSIVE EXPLANATION OF data_acquisition.py
+================================================
+
+OVERVIEW:
+This script is the final stage (Stage 4) of the fiber optic defect detection pipeline. It aggregates defect detection results from multiple sources (original image + separated regions), performs intelligent clustering to merge duplicate detections, generates comprehensive visualizations, calculates quality metrics, and produces final pass/fail determinations with detailed reports.
+
+IMPORTS AND DEPENDENCIES (Lines 1-20):
+======================================
+
+System and Standard Libraries:
+1. `import os` - Operating system interface (imported but not actively used)
+2. `import sys` - System-specific parameters, used for exit codes in main()
+3. `import json` - JSON serialization/deserialization for reports
+4. `from pathlib import Path` - Modern path handling for file operations
+5. `import logging` - Comprehensive logging throughout the analysis
+6. `from datetime import datetime` - Timestamps for reports and archiving
+7. `from collections import defaultdict` - Efficient grouping of defects
+8. `import shutil` - File operations for archiving and backups
+9. `import hashlib` - Generate unique IDs for defects using MD5 hashing
+10. `import warnings` - Suppressed with `warnings.filterwarnings('ignore')`
+
+Numerical and Scientific Libraries:
+11. `import numpy as np` - Numerical arrays and mathematical operations
+12. `from scipy.ndimage import gaussian_filter` - Smooth heatmaps
+13. `from sklearn.cluster import DBSCAN` - Density-based clustering algorithm
+
+Visualization Libraries:
+14. `import cv2` - OpenCV for image loading and processing
+15. `import matplotlib.pyplot as plt` - Main plotting library
+16. `import matplotlib.patches as patches` - Drawing shapes on plots
+17. `from matplotlib.colors import LinearSegmentedColormap` - Custom colormaps
+18. `import seaborn as sns` - Enhanced plotting styles (imported but not used)
+
+Type Hints:
+19. `from typing import Dict, List, Tuple, Optional, Any, Set` - Type annotations for better code clarity
+
+LOGGING CONFIGURATION (Lines 22-26):
+====================================
+```python
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(message)s'
+)
+```
+Sets up logging to display timestamped messages at INFO level and above.
+
+CLASS: NumpyEncoder (Lines 28-37):
+==================================
+```python
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
+```
+
+Custom JSON encoder that handles NumPy data types:
+- Converts NumPy integers to Python int
+- Converts NumPy floats to Python float
+- Converts NumPy arrays to Python lists
+- This is essential because standard JSON can't serialize NumPy types
+
+CLASS: DefectAggregator (Lines 39-1173):
+=========================================
+
+This is the main class that performs all defect aggregation and analysis.
+
+__init__ METHOD (Lines 42-68):
+------------------------------
+```python
+def __init__(self, results_dir: Path, original_image_path: Path, 
+             clustering_eps: float = 30.0, min_cluster_size: int = 1):
+```
+
+Initialization parameters:
+- `results_dir`: Directory containing all pipeline results
+- `original_image_path`: Path to the original fiber optic image
+- `clustering_eps`: Maximum distance between defects to be clustered (30 pixels default)
+- `min_cluster_size`: Minimum defects to form a cluster (1 = no minimum)
+
+The method:
+1. Validates that results directory and original image exist
+2. Loads the original image using OpenCV
+3. Extracts image dimensions (height, width)
+4. Initializes data storage structures:
+   - `all_defects`: List of all detected defects from all sources
+   - `region_masks`: Dictionary storing segmentation masks
+   - `detection_results`: List of all detection report data
+   - `region_offsets`: Bounding boxes for region-to-global coordinate mapping
+   - `data_integrity_log`: Track data quality issues
+
+validate_detection_report METHOD (Lines 70-93):
+-----------------------------------------------
+```python
+def validate_detection_report(self, report: Dict, file_path: Path) -> bool:
+```
+
+Validates the structure of detection reports:
+1. Checks for required fields ('defects', 'timestamp')
+2. Validates each defect has 'location_xy' as a list/tuple
+3. Logs issues to data_integrity_log with severity levels
+4. Returns True if valid, False otherwise
+
+This ensures data quality and helps debug issues with detection outputs.
+
+load_all_detection_results METHOD (Lines 95-186):
+-------------------------------------------------
+This method loads all detection JSON reports from the results directory:
+
+1. **Directory Discovery** (Lines 100-104):
+   - Looks for "3_detected" subdirectory
+   - Falls back to results_dir if not found
+   - Handles different directory structures gracefully
+
+2. **Report File Discovery** (Lines 106-108):
+   - Uses rglob to recursively find all "*_report.json" files
+   - Logs the count of found reports
+
+3. **Report Processing Loop** (Lines 113-183):
+   For each report file:
+   - Loads JSON content
+   - Validates structure using validate_detection_report()
+   - Extracts source name from filename
+   - Determines if it's a region or full image
+   - Loads associated mask file if exists
+   - Creates detection_data dictionary with metadata
+   - Processes each defect:
+     * Generates unique ID using MD5 hash
+     * Adds source tracking information
+     * Validates defect data
+     * Appends to all_defects list
+
+4. **Error Handling**:
+   - Catches JSON decode errors separately
+   - Logs all errors with full context
+   - Continues processing other files on error
+
+_determine_region_type METHOD (Lines 188-202):
+----------------------------------------------
+```python
+def _determine_region_type(self, source_name: str, report: Dict) -> Optional[str]:
+```
+
+Intelligently determines the region type (core/cladding/ferrule):
+1. Checks source filename for region keywords
+2. Checks report metadata for 'region_type' field
+3. Checks nested metadata structure
+4. Returns None if not a region (i.e., full image)
+
+_validate_defect_data METHOD (Lines 204-224):
+---------------------------------------------
+Validates individual defect data:
+1. Ensures 'location_xy' field exists
+2. Validates it's a list/tuple with 2 elements
+3. Converts coordinates to integers
+4. Handles type conversion errors gracefully
+
+load_separation_masks METHOD (Lines 226-275):
+---------------------------------------------
+Loads region segmentation masks and calculates offsets:
+
+1. **Path Discovery** (Lines 228-242):
+   - Tries multiple possible paths for masks
+   - Handles different directory structures
+
+2. **Mask Loading** (Lines 245-274):
+   For each region type (core/cladding/ferrule):
+   - Loads NumPy array mask file
+   - Validates dimensions match original image
+   - Calculates bounding box of non-zero pixels
+   - Stores offset information for coordinate mapping
+   - This offset data is crucial for mapping local region coordinates to global image coordinates
+
+map_defect_to_global_coords METHOD (Lines 276-301):
+---------------------------------------------------
+Maps defect coordinates from local (region) to global (full image) space:
+
+1. If not a region defect, coordinates are already global
+2. Uses pre-calculated region offsets for accurate mapping
+3. Adds local coordinates to region offset
+4. Validates bounds to ensure coordinates are within image
+5. Returns integer tuple of global (x, y) coordinates
+
+This is critical for accurate defect positioning when merging results.
+
+cluster_defects METHOD (Lines 303-359):
+---------------------------------------
+Performs DBSCAN clustering to merge nearby defects:
+
+1. **Coordinate Extraction** (Lines 311-323):
+   - Maps all defects to global coordinates
+   - Filters out invalid coordinates
+   - Stores global location in each defect
+
+2. **Adaptive Clustering** (Lines 326-330):
+   - For high defect density (>100), reduces eps to avoid over-merging
+   - This prevents clustering entire regions of dense defects
+
+3. **DBSCAN Clustering** (Lines 332-338):
+   - Runs density-based clustering
+   - Groups defects by cluster label
+   - Label -1 indicates noise (unclustered) points
+
+4. **Cluster Processing** (Lines 341-358):
+   - Noise points kept as individual defects
+   - Clustered defects merged using intelligent_merge()
+   - Adds clustering metadata to results
+
+intelligent_merge METHOD (Lines 361-394):
+-----------------------------------------
+Smart merging that considers defect compatibility:
+
+1. **Type Grouping** (Lines 366-369):
+   - Groups defects by type
+   - If all same type, merges normally
+
+2. **Distance Checking** (Lines 376-382):
+   - Calculates pairwise distances
+   - If all within 10 pixels, considers them same defect
+
+3. **Different Types Handling** (Lines 384-394):
+   - If different types and not very close
+   - Returns most severe defect
+   - Notes nearby defects for context
+
+merge_defect_cluster METHOD (Lines 396-475):
+--------------------------------------------
+Comprehensive defect merging that preserves information:
+
+1. **Weighted Centroid** (Lines 401-406):
+   - Uses confidence scores as weights
+   - Calculates weighted average position
+
+2. **ID Management** (Lines 408-410):
+   - Preserves all constituent IDs
+   - Creates new merged ID using MD5 hash
+
+3. **Property Aggregation** (Lines 412-438):
+   - Merges all relevant properties
+   - Keeps list of all sources and types
+   - Calculates consensus defect type
+   - Aggregates areas, severities, algorithms
+
+4. **Directional Defects** (Lines 442-451):
+   - For scratches/cracks, calculates mean orientation
+   - Uses circular statistics for angles
+   - Converts to cardinal directions
+
+5. **Custom Fields** (Lines 454-473):
+   - Preserves any additional fields
+   - Handles different data types appropriately
+
+orientation_to_direction METHOD (Lines 477-488):
+-----------------------------------------------
+Converts numerical orientation (0-180°) to cardinal direction:
+- 0-22.5° or 157.5-180°: Horizontal
+- 67.5-112.5°: Vertical  
+- 22.5-67.5°: Diagonal-NE
+- 112.5-157.5°: Diagonal-NW
+
+calculate_defect_heatmap METHOD (Lines 490-528):
+------------------------------------------------
+Creates a weighted heatmap visualization:
+
+1. **Severity Weighting** (Lines 495-501):
+   - Critical: 1.0, High: 0.75, Medium: 0.5, Low: 0.25, Negligible: 0.1
+
+2. **Heatmap Generation** (Lines 503-519):
+   - For each defect, adds weighted value at location
+   - Size based on defect area
+   - Weight = severity × confidence
+
+3. **Smoothing** (Lines 521-527):
+   - Applies Gaussian filter for smooth visualization
+   - Normalizes to 0-1 range
+
+create_comprehensive_visualization METHOD (Lines 530-776):
+---------------------------------------------------------
+Creates a complex multi-panel visualization figure:
+
+1. **Layout Setup** (Lines 533-535):
+   - 24×14 inch figure with 3×4 grid
+   - Different height ratios for rows
+
+2. **Panel 1: Defect Overlay** (Lines 541-597):
+   - Shows original image with defect markers
+   - Color-coded by defect type
+   - Size indicates severity and area
+   - Includes directional arrows for linear defects
+   - Legend with defect types
+
+3. **Panel 2: Density Heatmap** (Lines 599-614):
+   - Overlays heatmap on dimmed original image
+   - Custom colormap from white to dark red
+   - Shows defect concentration areas
+
+4. **Panel 3: Type Distribution** (Lines 617-640):
+   - Bar chart of defect types
+   - Color-matched to overlay
+   - Shows counts and percentages
+
+5. **Panel 4: Severity Distribution** (Lines 642-663):
+   - Bar chart with severity levels
+   - Color gradient from green to red
+   - Labeled with counts
+
+6. **Panel 5: Confidence Distribution** (Lines 666-687):
+   - Histogram of detection confidences
+   - Color-coded bars (red/orange/green)
+   - Shows mean confidence line
+
+7. **Panel 6: Size Distribution** (Lines 690-709):
+   - Log-scale histogram of defect sizes
+   - Shows median and mean statistics
+
+8. **Panel 7: Processing Statistics** (Lines 712-728):
+   - Text panel with analysis metrics
+   - Shows reduction ratio, parameters used
+   - Lists detection sources and algorithms
+
+9. **Panel 8: Quality Assessment** (Lines 731-764):
+   - Overall quality score calculation
+   - Pass/fail determination
+   - Detailed failure criteria
+   - Color-coded background
+
+generate_final_report METHOD (Lines 778-900):
+---------------------------------------------
+Generates comprehensive JSON report:
+
+1. **Statistics Calculation** (Lines 782-805):
+   - Groups defects by type, severity, source
+   - Calculates quality score with deductions
+   - Each severity has point deduction value
+
+2. **Pass/Fail Logic** (Lines 807-822):
+   - Fails if any critical defects
+   - Fails if >2 high severity defects  
+   - Fails if quality score <70
+   - Records specific failure reasons
+
+3. **Report Structure** (Lines 832-886):
+   - Timestamp and version info
+   - Image properties
+   - Analysis summary with all metrics
+   - Detailed statistics by category
+   - Quality score breakdown
+   - Processing parameters
+   - Formatted defect list
+   - Data integrity information
+
+4. **Backup Creation** (Lines 888-892):
+   - Creates timestamped backup if file exists
+   - Prevents data loss
+
+format_defect_for_report METHOD (Lines 902-952):
+------------------------------------------------
+Formats individual defects for the report:
+
+1. **Basic Information** (Lines 904-923):
+   - Index, ID, type, severity, location
+   - Area, confidence, clustering info
+   - Detection methods and sources
+
+2. **Type-Specific Data** (Lines 927-932):
+   - Orientation info for linear defects
+   - Direction and standard deviation
+
+3. **Clustering Details** (Lines 935-939):
+   - Number of merged defects
+   - First 5 constituent IDs
+
+4. **Additional Metrics** (Lines 942-950):
+   - Confidence standard deviation
+   - Nearby defect information
+
+create_text_summary METHOD (Lines 954-1071):
+--------------------------------------------
+Creates human-readable summary report:
+
+1. **Header Section** (Lines 957-965):
+   - Title and version
+   - Timestamp and image info
+   - Dimensions
+
+2. **Executive Summary** (Lines 967-980):
+   - Pass/fail status
+   - Quality score
+   - Total defects
+   - Failure reasons with bullets
+
+3. **Processing Summary** (Lines 982-988):
+   - Sources analyzed
+   - Raw vs merged defect counts
+   - Clustering reduction ratio
+
+4. **Defect Analysis** (Lines 990-1007):
+   - Type distribution with percentages
+   - Severity distribution with symbols
+   - Uses severity order for consistent display
+
+5. **Coverage Analysis** (Lines 1009-1016):
+   - Total affected area
+   - Percentage of image
+   - Average and largest defect sizes
+
+6. **Confidence Analysis** (Lines 1018-1024):
+   - Mean, standard deviation, range
+   - Formatted as percentages
+
+7. **Critical Defects Detail** (Lines 1026-1039):
+   - Details up to 5 critical defects
+   - Location, size, confidence, algorithms
+   - Notes if more exist
+
+8. **Data Integrity** (Lines 1041-1047):
+   - Reports warnings and errors if any
+
+9. **Recommendations** (Lines 1049-1065):
+   - Specific actions based on results
+   - Different for pass/fail status
+   - Considers affected area percentage
+
+run_complete_analysis METHOD (Lines 1073-1142):
+-----------------------------------------------
+Main analysis pipeline orchestration:
+
+1. **Initialization** (Lines 1075-1077):
+   - Logs analysis start
+
+2. **Step 1: Load Detection Results** (Lines 1080-1086):
+   - Calls load_all_detection_results()
+   - Returns empty report if no defects
+
+3. **Step 2: Load Separation Masks** (Lines 1088-1090):
+   - Calls load_separation_masks()
+
+4. **Step 3: Clustering** (Lines 1092-1097):
+   - Calls cluster_defects()
+   - Logs reduction statistics
+
+5. **Step 4: Output Generation** (Lines 1099-1130):
+   - Creates output directory structure
+   - Archives previous results
+   - Generates visualization
+   - Creates JSON report
+   - Creates text summary
+   - Saves data integrity log if issues exist
+
+6. **Final Summary** (Lines 1132-1136):
+   - Logs completion status
+   - Shows final pass/fail and score
+
+_create_empty_report METHOD (Lines 1144-1159):
+----------------------------------------------
+Creates valid report structure when no defects found:
+- Sets quality score to 100
+- Pass status
+- Empty defects array
+- Includes message explaining no defects
+
+_archive_previous_results METHOD (Lines 1161-1173):
+---------------------------------------------------
+Archives existing results before creating new ones:
+1. Finds existing files matching image name
+2. Creates timestamped archive directory
+3. Moves files to archive
+4. Logs archival action
+
+INTEGRATION FUNCTION (Lines 1176-1222):
+=======================================
+
+integrate_with_pipeline FUNCTION:
+---------------------------------
+Bridge function for pipeline integration:
+
+1. **Path Validation** (Lines 1179-1183):
+   - Ensures results directory exists
+
+2. **Image Discovery** (Lines 1185-1210):
+   - Searches multiple locations for original image
+   - Tries various extensions
+   - Provides detailed error if not found
+
+3. **Analysis Execution** (Lines 1214-1222):
+   - Creates DefectAggregator instance
+   - Runs complete analysis
+   - Returns report or raises exception
+
+MAIN FUNCTION (Lines 1225-1274):
+================================
+
+Command-line interface for standalone execution:
+
+1. **Argument Parsing** (Lines 1229-1242):
+   - Results directory (required)
+   - Image name (required)
+   - Clustering eps (optional, default 30)
+   - Log level (optional, default INFO)
+
+2. **Execution** (Lines 1247-1270):
+   - Configures logging level
+   - Runs integration function
+   - Prints formatted results summary
+   - Shows failure reasons if any
+   - Exits with code 1 on error
+
+MATHEMATICAL CONCEPTS:
+======================
+
+1. **DBSCAN Clustering**:
+   - Density-based algorithm
+   - Groups points within eps distance
+   - Handles arbitrary cluster shapes
+   - Identifies noise points
+
+2. **Weighted Centroid**:
+   - Position = Σ(weight_i × position_i) / Σ(weight_i)
+   - Uses confidence as weight
+
+3. **Circular Statistics**:
+   - For averaging angles
+   - Converts to unit vectors
+   - Averages x,y components
+   - Converts back to angle
+
+4. **Gaussian Filtering**:
+   - Smooths heatmap data
+   - Reduces noise
+   - Creates continuous density
+
+5. **Quality Score Calculation**:
+   - Starts at 100
+   - Deducts points per defect severity
+   - Critical: -25, High: -15, Medium: -8, Low: -3, Negligible: -1
+
+KEY ALGORITHMS:
+===============
+
+1. **Coordinate Mapping**:
+   - Local to global transformation
+   - Uses pre-calculated offsets
+   - Ensures accurate positioning
+
+2. **Intelligent Merging**:
+   - Considers defect types
+   - Distance-based decisions
+   - Preserves all metadata
+
+3. **Pass/Fail Logic**:
+   - Multiple criteria evaluation
+   - Specific failure reasons
+   - Industry-standard thresholds
+
+4. **Data Validation**:
+   - Multi-level checking
+   - Graceful error handling
+   - Detailed logging
+
+OUTPUT FILES:
+=============
+
+1. **{image}_comprehensive_analysis.png**: Multi-panel visualization
+2. **{image}_final_report.json**: Complete analysis data
+3. **{image}_summary.txt**: Human-readable summary
+4. **{image}_integrity_log.json**: Data quality issues (if any)
+5. **Archive folder**: Previous results with timestamps
+
+This script represents sophisticated data aggregation and analysis, handling complex scenarios like overlapping detections, coordinate transformations, and multi-criteria quality assessment. It provides both detailed technical data and accessible summaries for decision-making.

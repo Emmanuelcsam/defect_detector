@@ -1,0 +1,671 @@
+COMPREHENSIVE EXPLANATION OF app.py
+====================================
+
+OVERVIEW:
+This is the main entry point and orchestrator for a fiber optic defect detection system. It manages a 4-stage pipeline that processes fiber optic images to detect and analyze defects. The script coordinates multiple specialized modules to perform image processing, region separation, defect detection, and final data aggregation.
+
+IMPORTS AND DEPENDENCIES (Lines 1-8):
+=====================================
+
+1. `import os` - Operating system interface, though not directly used in this script
+2. `import sys` - System-specific parameters and functions, used for:
+   - Adding directories to Python path
+   - Exiting the program on fatal errors
+   - Configuring logging output to stdout
+3. `import json` - JSON data handling for reading configuration files
+4. `import shutil` - High-level file operations (imported but not used in this version)
+5. `import time` - Time-related functions for measuring pipeline execution duration
+6. `from pathlib import Path` - Modern path handling for cross-platform file system operations
+7. `import logging` - Comprehensive logging system for tracking pipeline execution
+8. `import shlex` - Shell-like syntax parsing, used to handle file paths with spaces
+
+LOGGING CONFIGURATION (Lines 10-18):
+====================================
+```python
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+```
+
+This sets up a logging system that:
+- Sets the minimum logging level to INFO (shows INFO, WARNING, ERROR, CRITICAL messages)
+- Formats messages with timestamp, level, and the actual message
+- Outputs all logs to stdout (standard output/console)
+- Example output: "2024-01-10 14:23:45,123 - [INFO] - Starting full pipeline for: image.jpg"
+
+PATH CONFIGURATION (Lines 20-25):
+=================================
+```python
+current_dir = Path(__file__).parent.resolve()
+if str(current_dir) not in sys.path:
+    sys.path.append(str(current_dir))
+```
+
+This code:
+1. Gets the directory containing app.py using `Path(__file__).parent`
+2. Resolves it to an absolute path with `.resolve()`
+3. Adds this directory to Python's module search path if not already present
+4. This allows importing local modules (process, separation, detection, data_acquisition) without complex path handling
+
+MODULE IMPORTS WITH ERROR HANDLING (Lines 27-39):
+=================================================
+```python
+try:
+    from process import reimagine_image
+    from separation import UnifiedSegmentationSystem
+    from detection import OmniFiberAnalyzer, OmniConfig
+    from data_acquisition import integrate_with_pipeline as run_data_acquisition
+    logging.info("Successfully imported all processing & analysis modules including data acquisition.")
+except ImportError as e:
+    logging.error(f"Fatal Error: Failed to import a required module: {e}")
+    logging.error("Please ensure process.py, separation.py, detection.py, and data_acquisition.py are in the same directory as app.py.")
+    sys.exit(1)
+```
+
+This protected import block:
+1. Imports key functions/classes from the 4 pipeline modules:
+   - `reimagine_image`: Creates multiple processed versions of an image
+   - `UnifiedSegmentationSystem`: Segments images into regions/zones
+   - `OmniFiberAnalyzer` & `OmniConfig`: Analyzes images for defects
+   - `run_data_acquisition`: Aggregates and analyzes all detection results
+2. If any import fails, logs detailed error messages and exits with code 1
+3. This ensures all dependencies are available before proceeding
+
+CLASS: PipelineOrchestrator (Lines 42-271):
+===========================================
+
+This is the main controller class that manages the entire defect detection pipeline.
+
+__init__ METHOD (Lines 47-56):
+------------------------------
+```python
+def __init__(self, config_path):
+    logging.info("Initializing Pipeline Orchestrator...")
+    self.config_path = Path(config_path).resolve()
+    self.config = self.load_config(config_path)
+    self.config = self.resolve_config_paths(self.config)
+    self.results_base_dir = Path(self.config['paths']['results_dir'])
+    self.results_base_dir.mkdir(parents=True, exist_ok=True)
+    logging.info(f"Results will be saved in: {self.results_base_dir}")
+```
+
+Initialization process:
+1. Stores the absolute path to the configuration file
+2. Loads the JSON configuration using `load_config()`
+3. Converts relative paths in config to absolute paths using `resolve_config_paths()`
+4. Creates the results directory (and any parent directories) if it doesn't exist
+5. The `parents=True` parameter creates intermediate directories as needed
+6. `exist_ok=True` prevents errors if the directory already exists
+
+load_config METHOD (Lines 57-66):
+---------------------------------
+```python
+def load_config(self, config_path):
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        logging.info(f"Successfully loaded configuration from {config_path}")
+        return config
+    except Exception as e:
+        logging.error(f"Fatal Error: Could not load or parse config.json: {e}")
+        sys.exit(1)
+```
+
+Configuration loading:
+1. Opens the config file in read mode
+2. Parses JSON content into a Python dictionary
+3. Returns the configuration dictionary on success
+4. On any error (file not found, invalid JSON), logs error and exits program
+5. Uses context manager (`with`) to ensure file is properly closed
+
+resolve_config_paths METHOD (Lines 68-80):
+------------------------------------------
+```python
+def resolve_config_paths(self, config):
+    config_dir = self.config_path.parent
+    
+    for key in ['results_dir', 'zones_methods_dir', 'detection_knowledge_base']:
+        if key in config['paths']:
+            path = Path(config['paths'][key])
+            if not path.is_absolute():
+                config['paths'][key] = str(config_dir / path)
+    
+    return config
+```
+
+Path resolution logic:
+1. Gets the directory containing the config file
+2. Iterates through specific path keys that might be relative
+3. For each path, checks if it's already absolute
+4. If relative, makes it absolute by joining with config directory
+5. This allows config files to use relative paths for portability
+
+run_full_pipeline METHOD (Lines 82-116):
+----------------------------------------
+```python
+def run_full_pipeline(self, input_image_path: Path):
+    start_time = time.time()
+    logging.info(f"--- Starting full pipeline for: {input_image_path.name} ---")
+    
+    # Create unique directory for results
+    run_dir = self.results_base_dir / input_image_path.stem
+    run_dir.mkdir(exist_ok=True)
+    
+    # Run all 4 stages
+    reimagined_dir, all_images_to_separate = self.run_processing_stage(input_image_path, run_dir)
+    separated_dir, all_images_to_detect = self.run_separation_stage(all_images_to_separate, run_dir, input_image_path)
+    self.run_detection_stage(all_images_to_detect, run_dir)
+    final_report = self.run_data_acquisition_stage(input_image_path, run_dir)
+    
+    # Calculate and log execution time
+    end_time = time.time()
+    logging.info(f"--- Pipeline for {input_image_path.name} completed in {end_time - start_time:.2f} seconds ---")
+    
+    # Log summary if available
+    if final_report and 'analysis_summary' in final_report:
+        summary = final_report['analysis_summary']
+        logging.info(f"FINAL RESULTS: Status={summary['pass_fail_status']}, "
+                    f"Quality Score={summary['quality_score']}/100, "
+                    f"Total Defects={summary['total_merged_defects']}")
+    
+    return final_report
+```
+
+Main pipeline execution:
+1. Records start time for performance tracking
+2. Creates a unique directory named after the image (without extension)
+3. Executes all 4 stages in sequence:
+   - Stage 1: Image processing/reimagining
+   - Stage 2: Region separation/zoning
+   - Stage 3: Defect detection
+   - Stage 4: Data acquisition/aggregation
+4. Each stage passes its outputs to the next stage
+5. Calculates total execution time
+6. Logs final summary with pass/fail status, quality score, and defect count
+7. Returns the final analysis report
+
+run_processing_stage METHOD (Lines 118-138):
+--------------------------------------------
+```python
+def run_processing_stage(self, input_image_path, run_dir):
+    logging.info(">>> STAGE 1: PROCESSING - Reimagining images...")
+    process_cfg = self.config['process_settings']
+    reimagined_dir = run_dir / process_cfg['output_folder_name']
+    
+    try:
+        reimagine_image(str(input_image_path), str(reimagined_dir))
+    except Exception as e:
+        logging.error(f"Error during reimagine_image for {input_image_path.name}: {e}")
+    
+    # Gather all images for next stage
+    all_images_to_separate = [input_image_path]
+    reimagined_files = list(reimagined_dir.glob('*.jpg')) if reimagined_dir.exists() else []
+    all_images_to_separate.extend(reimagined_files)
+    
+    logging.info(f"Processing stage complete. Found {len(reimagined_files)} reimagined images.")
+    return reimagined_dir, all_images_to_separate
+```
+
+Stage 1 - Image Processing:
+1. Gets processing configuration from the main config
+2. Creates output directory for reimagined images
+3. Calls `reimagine_image()` to create processed versions
+4. If processing fails, continues with just the original image
+5. Collects all images (original + reimagined) for the next stage
+6. Uses glob pattern '*.jpg' to find all JPEG outputs
+7. Returns both the output directory and list of all images
+
+run_separation_stage METHOD (Lines 140-173):
+--------------------------------------------
+```python
+def run_separation_stage(self, image_paths, run_dir, original_image_path):
+    logging.info(">>> STAGE 2: SEPARATION - Generating zoned regions...")
+    separation_cfg = self.config['separation_settings']
+    zones_methods_dir = self.config['paths']['zones_methods_dir']
+    separated_dir = run_dir / separation_cfg['output_folder_name']
+    separated_dir.mkdir(exist_ok=True)
+    
+    all_separated_regions = []
+    
+    try:
+        separator = UnifiedSegmentationSystem(methods_dir=zones_methods_dir)
+        
+        for image_path in image_paths:
+            logging.info(f"Separating image: {image_path.name}")
+            image_separation_output_dir = separated_dir / image_path.stem
+            
+            consensus = separator.process_image(image_path, str(image_separation_output_dir))
+            
+            if consensus and consensus.get('saved_regions'):
+                all_separated_regions.extend([Path(p) for p in consensus['saved_regions']])
+    
+    except Exception as e:
+        logging.error(f"A critical error occurred in the separation stage: {e}", exc_info=True)
+    
+    # Include separated regions + original image
+    all_images_to_detect = all_separated_regions + [original_image_path]
+    
+    logging.info(f"Separation stage complete. Generated {len(all_separated_regions)} separated regions.")
+    logging.info(f"Total inputs for detection stage: {len(all_images_to_detect)}")
+    return separated_dir, all_images_to_detect
+```
+
+Stage 2 - Region Separation:
+1. Configures output directory for separated regions
+2. Initializes the segmentation system with methods directory
+3. For each input image:
+   - Creates a subdirectory for that image's regions
+   - Processes the image to generate consensus masks
+   - Collects paths to all saved region images
+4. Handles errors gracefully to continue processing
+5. Combines all separated regions with the original image for detection
+6. The original image is included to detect defects that might span regions
+
+run_detection_stage METHOD (Lines 175-224):
+-------------------------------------------
+```python
+def run_detection_stage(self, image_paths, run_dir):
+    logging.info(">>> STAGE 3: DETECTION - Analyzing for defects...")
+    detection_cfg = self.config['detection_settings']
+    detection_output_dir = run_dir / detection_cfg['output_folder_name']
+    detection_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Create detection config
+        detection_config = detection_cfg['config'].copy()
+        
+        # Handle knowledge base path
+        kb_path = self.config['paths'].get('detection_knowledge_base')
+        if kb_path:
+            detection_config['knowledge_base_path'] = kb_path
+        
+        # Map parameters to OmniConfig
+        omni_config_dict = {
+            'knowledge_base_path': detection_config.get('knowledge_base_path'),
+            'min_defect_size': detection_config.get('min_defect_size', 
+                                                   detection_config.get('min_defect_area_px', 10)),
+            'max_defect_size': detection_config.get('max_defect_size', 
+                                                   detection_config.get('max_defect_area_px', 5000)),
+            'severity_thresholds': detection_config.get('severity_thresholds'),
+            'confidence_threshold': detection_config.get('confidence_threshold', 0.3),
+            'anomaly_threshold_multiplier': detection_config.get('anomaly_threshold_multiplier', 2.5),
+            'enable_visualization': detection_config.get('enable_visualization', 
+                                                        detection_config.get('generate_json_report', True))
+        }
+        
+        omni_config = OmniConfig(**omni_config_dict)
+        analyzer = OmniFiberAnalyzer(omni_config)
+        
+        for image_path in image_paths:
+            logging.info(f"Detecting defects in: {image_path.name}")
+            image_detection_output_dir = detection_output_dir / image_path.stem
+            image_detection_output_dir.mkdir(parents=True, exist_ok=True)
+            
+            analyzer.analyze_end_face(str(image_path), str(image_detection_output_dir))
+    
+    except Exception as e:
+        logging.error(f"A critical error occurred in the detection stage: {e}", exc_info=True)
+    
+    logging.info("Detection stage complete.")
+```
+
+Stage 3 - Defect Detection:
+1. Creates detection output directory structure
+2. Builds configuration for the detector:
+   - Copies base config settings
+   - Adds knowledge base path if specified
+   - Maps parameter names (handles legacy naming)
+   - Provides default values for missing parameters
+3. Parameter mapping handles multiple naming conventions:
+   - `min_defect_size` or `min_defect_area_px` (default: 10)
+   - `max_defect_size` or `max_defect_area_px` (default: 5000)
+   - `enable_visualization` or `generate_json_report` (default: True)
+4. Creates OmniConfig dataclass with mapped parameters
+5. Initializes one analyzer instance for all images (efficiency)
+6. For each image:
+   - Creates a subdirectory for its detection results
+   - Runs defect analysis
+   - Saves results to the output directory
+
+run_data_acquisition_stage METHOD (Lines 226-271):
+--------------------------------------------------
+```python
+def run_data_acquisition_stage(self, original_image_path, run_dir):
+    logging.info(">>> STAGE 4: DATA ACQUISITION - Aggregating and analyzing all results...")
+    
+    try:
+        # Get clustering parameters
+        data_acq_cfg = self.config.get('data_acquisition_settings', {})
+        clustering_eps = data_acq_cfg.get('clustering_eps', 30.0)
+        
+        # Run analysis
+        final_report = run_data_acquisition(
+            str(run_dir), 
+            original_image_path.stem,
+            clustering_eps=clustering_eps
+        )
+        
+        if final_report:
+            # Log summary
+            summary = final_report.get('analysis_summary', {})
+            logging.info(f"Data acquisition complete. Final status: {summary.get('pass_fail_status', 'UNKNOWN')}")
+            
+            # Create summary file
+            summary_path = run_dir / "FINAL_SUMMARY.txt"
+            with open(summary_path, 'w') as f:
+                f.write(f"FINAL ANALYSIS SUMMARY\n")
+                f.write(f"===================\n\n")
+                f.write(f"Image: {original_image_path.name}\n")
+                f.write(f"Status: {summary.get('pass_fail_status', 'UNKNOWN')}\n")
+                f.write(f"Quality Score: {summary.get('quality_score', 0)}/100\n")
+                f.write(f"Total Defects: {summary.get('total_merged_defects', 0)}\n")
+                
+                if summary.get('failure_reasons'):
+                    f.write(f"\nFailure Reasons:\n")
+                    for reason in summary['failure_reasons']:
+                        f.write(f"  - {reason}\n")
+                
+                f.write(f"\nDetailed results available in: 4_final_analysis/\n")
+            
+            return final_report
+        else:
+            logging.error("Data acquisition stage failed to produce a report")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Error during data acquisition stage: {e}", exc_info=True)
+        return None
+```
+
+Stage 4 - Data Acquisition and Final Analysis:
+1. Retrieves clustering parameters (default eps=30.0 for DBSCAN clustering)
+2. Calls data acquisition module to:
+   - Aggregate all detection results
+   - Merge duplicate defects across regions
+   - Calculate final quality metrics
+3. Creates a human-readable summary file with:
+   - Pass/fail status
+   - Quality score (0-100)
+   - Total defect count
+   - Failure reasons (if any)
+4. Returns the complete analysis report
+5. Handles errors gracefully, returning None on failure
+
+INTERACTIVE FUNCTIONS (Lines 273-322):
+======================================
+
+ask_for_images FUNCTION (Lines 275-302):
+----------------------------------------
+```python
+def ask_for_images() -> list[Path]:
+    print("\nEnter one or more full image paths. Separate paths with spaces.")
+    print("Example: C:\\Users\\Test\\img1.png \"C:\\My Images\\test.png\"")
+    paths_input = input("> ").strip()
+    
+    if not paths_input:
+        return []
+        
+    # Parse with shlex for proper quote handling
+    path_strings = shlex.split(paths_input)
+    
+    valid_paths = []
+    invalid_paths = []
+    for path_str in path_strings:
+        path = Path(path_str)
+        if path.is_file():
+            valid_paths.append(path)
+        else:
+            invalid_paths.append(str(path))
+            
+    if invalid_paths:
+        logging.warning(f"The following paths were not found and will be skipped: {', '.join(invalid_paths)}")
+        
+    return valid_paths
+```
+
+User input handling for image paths:
+1. Prompts for space-separated paths
+2. Uses `shlex.split()` to handle quoted paths (for paths with spaces)
+3. Validates each path exists as a file
+4. Separates valid and invalid paths
+5. Warns about invalid paths but continues with valid ones
+6. Returns list of valid Path objects
+
+ask_for_folder FUNCTION (Lines 304-321):
+----------------------------------------
+```python
+def ask_for_folder() -> Path | None:
+    folder_path_str = input("\nEnter the full path to the folder containing images: ").strip()
+    
+    # Handle quoted paths
+    if folder_path_str:
+        folder_path_str = shlex.split(folder_path_str)[0] if folder_path_str else ""
+    
+    if not folder_path_str:
+        return None
+        
+    folder_path = Path(folder_path_str)
+    
+    if folder_path.is_dir():
+        return folder_path
+    else:
+        logging.error(f"Directory not found: {folder_path}")
+        return None
+```
+
+Folder input handling:
+1. Prompts for a single folder path
+2. Uses shlex to handle quoted paths
+3. Takes only the first path if multiple provided
+4. Validates the path is a directory
+5. Returns Path object or None
+
+MAIN FUNCTION (Lines 323-455):
+==============================
+
+The main entry point provides an interactive menu system.
+
+Initialization (Lines 326-354):
+-------------------------------
+```python
+print("\n" + "="*80)
+print("UNIFIED FIBER OPTIC DEFECT DETECTION PIPELINE".center(80))
+print("Interactive Mode - Full Pipeline with Data Acquisition".center(80))
+print("="*80)
+
+# Get config path
+config_path_str = input("Enter path to config.json (or press Enter for default 'config.json'): ").strip()
+if not config_path_str:
+    config_path_str = "config.json"
+
+# Remove quotes if present
+if config_path_str.startswith('"') and config_path_str.endswith('"'):
+    config_path_str = config_path_str[1:-1]
+
+config_path = Path(config_path_str)
+if not config_path.exists():
+    logging.error(f"Fatal Error: Configuration file not found at: {config_path}")
+    print("\nPlease run setup.py first to create the necessary files and directories.")
+    sys.exit(1)
+
+# Initialize orchestrator
+try:
+    orchestrator = PipelineOrchestrator(str(config_path))
+except Exception as e:
+    logging.error(f"Failed to initialize pipeline: {e}")
+    print("\nPlease check your configuration file and ensure all required directories exist.")
+    print("You may need to run setup.py first.")
+    sys.exit(1)
+```
+
+Startup process:
+1. Displays formatted welcome banner
+2. Prompts for config file path (default: config.json)
+3. Strips quotes that might be copied from file explorers
+4. Validates config file exists
+5. Initializes the pipeline orchestrator
+6. Provides helpful error messages if setup is incomplete
+
+Main Menu Loop (Lines 357-454):
+-------------------------------
+The menu offers three options:
+
+OPTION 1 - Process Specific Images (Lines 365-388):
+```python
+if choice == '1':
+    image_paths = ask_for_images()
+    if not image_paths:
+        logging.warning("No valid image paths provided.")
+        continue
+    
+    logging.info(f"Starting processing for {len(image_paths)} image(s).")
+    for image_path in image_paths:
+        try:
+            final_report = orchestrator.run_full_pipeline(image_path)
+            
+            # Display summary
+            if final_report and 'analysis_summary' in final_report:
+                summary = final_report['analysis_summary']
+                print(f"\n✓ {image_path.name}: {summary['pass_fail_status']} "
+                      f"(Score: {summary['quality_score']}/100, "
+                      f"Defects: {summary['total_merged_defects']})")
+            else:
+                print(f"\n✗ {image_path.name}: Processing failed")
+                
+        except Exception as e:
+            logging.error(f"Failed to process {image_path}: {e}")
+            continue
+```
+
+Processing specific images:
+1. Gets list of image paths from user
+2. Processes each image through the full pipeline
+3. Displays concise results with checkmarks/crosses
+4. Shows pass/fail status, quality score, and defect count
+5. Continues processing even if one image fails
+
+OPTION 2 - Process Folder (Lines 390-447):
+```python
+elif choice == '2':
+    folder_path = ask_for_folder()
+    if not folder_path:
+        continue
+        
+    # Find all images
+    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif']
+    image_files = []
+    
+    for ext in image_extensions:
+        image_files.extend(folder_path.glob(f"*{ext}"))
+        image_files.extend(folder_path.glob(f"*{ext.upper()}"))
+    
+    # Remove duplicates
+    image_files = list(set(image_files))
+    
+    if not image_files:
+        logging.warning(f"No images with extensions ({', '.join(image_extensions)}) found in {folder_path}")
+        continue
+    
+    # Process with statistics
+    passed = 0
+    failed = 0
+    errors = 0
+    
+    for image_file in sorted(image_files):
+        try:
+            final_report = orchestrator.run_full_pipeline(image_file)
+            
+            if final_report and 'analysis_summary' in final_report:
+                summary = final_report['analysis_summary']
+                if summary['pass_fail_status'] == 'PASS':
+                    passed += 1
+                else:
+                    failed += 1
+                    
+                print(f"\n✓ {image_file.name}: {summary['pass_fail_status']} "
+                      f"(Score: {summary['quality_score']}/100)")
+            else:
+                errors += 1
+                print(f"\n✗ {image_file.name}: Processing error")
+                
+        except Exception as e:
+            logging.error(f"Failed to process {image_file}: {e}")
+            errors += 1
+            continue
+    
+    # Print summary
+    print(f"\n{'='*60}")
+    print(f"BATCH PROCESSING COMPLETE")
+    print(f"{'='*60}")
+    print(f"Total Images: {len(image_files)}")
+    print(f"Passed: {passed}")
+    print(f"Failed: {failed}")
+    print(f"Errors: {errors}")
+    print(f"{'='*60}")
+```
+
+Batch processing logic:
+1. Gets folder path from user
+2. Searches for images with common extensions
+3. Handles both lowercase and uppercase extensions
+4. Removes duplicates using set conversion
+5. Maintains statistics: passed, failed, errors
+6. Processes images in sorted order for consistency
+7. Displays batch summary at the end
+
+OPTION 3 - Exit (Lines 449-451):
+Simple exit option that breaks the menu loop
+
+ERROR HANDLING AND ROBUSTNESS:
+==============================
+
+The script implements multiple levels of error handling:
+
+1. **Import Protection**: Validates all required modules are available
+2. **Configuration Validation**: Ensures config file exists and is valid JSON
+3. **Path Resolution**: Converts relative paths to absolute for reliability
+4. **Directory Creation**: Creates all necessary directories automatically
+5. **Graceful Degradation**: If one stage fails, attempts to continue with available data
+6. **Input Validation**: Validates user-provided paths before processing
+7. **Batch Processing**: Continues processing remaining images if one fails
+8. **Detailed Logging**: Provides comprehensive logs for debugging
+9. **User-Friendly Messages**: Clear error messages guide users to solutions
+
+PROGRAM FLOW:
+=============
+
+1. User starts the program
+2. Program loads configuration
+3. User selects processing mode (specific images or folder)
+4. For each image:
+   a. Stage 1: Creates processed versions (reimagined images)
+   b. Stage 2: Segments into regions/zones
+   c. Stage 3: Detects defects in all images/regions
+   d. Stage 4: Aggregates results and generates final report
+5. Results are saved in organized directory structure
+6. Summary is displayed to user
+7. Process repeats or exits based on user choice
+
+OUTPUT STRUCTURE:
+================
+
+For each processed image, creates:
+```
+results_dir/
+└── image_name/
+    ├── 1_reimagined/          # Processed image versions
+    ├── 2_separated/           # Segmented regions
+    ├── 3_detection/           # Defect detection results
+    ├── 4_final_analysis/      # Aggregated analysis
+    └── FINAL_SUMMARY.txt      # Human-readable summary
+```
+
+This modular structure allows:
+- Easy debugging of individual stages
+- Reprocessing of specific stages
+- Clear organization of results
+- Traceability of the analysis process
